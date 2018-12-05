@@ -1,0 +1,10 @@
+# Build folders
+output/*
+build/*
+
+# Temp folders
+temp/*
+backup/*
+
+# Project folders
+.vscode/*
