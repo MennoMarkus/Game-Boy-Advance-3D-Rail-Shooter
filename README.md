@@ -8,7 +8,6 @@ Make sure DevKitPro is added to the enviourment variables.
 Run the included make file to ouput a .gba file.  
 Use an game boy advance emulater to run the .gba file. The project has been tested on no$gba.  
 
-# Backlog goals:
-- Create backLog. 
-- Create art level assets pipeline. 
-- Port orthographic projection matrix to assembly and push to github.
+# Current goals:
+- Create a game concept.
+- Create a model viewer.
