@@ -27,10 +27,10 @@ include $(DEVKITARM)/gba_rules
 #---------------------------------------------------------------------------------
 TARGET		?= $(notdir $(CURDIR))
 BUILD		:= build
-SOURCES 	:= source $(shell find $(wildcard source/*) -type d -print)
-INCLUDES	:= include $(shell find $(wildcard include/*) -type d -print)
-DATA		:= data $(shell find $(wildcard data/*) -type d -print)
-MUSIC		:=
+SOURCES 	:= $(shell test -d ./source && find ./source -type f -print | sed -r 's|/[^/]+$$||' |sort |uniq)
+INCLUDES	:= $(shell test -d ./include && find ./include -type f -print | sed -r 's|/[^/]+$$||' |sort |uniq)
+DATA		:= $(shell test -d ./data && find ./data -type f -print | sed -r 's|/[^/]+$$||' |sort |uniq)
+MUSIC		:= $(shell test -d ./data && find ./data -type f -print | sed -r 's|/[^/]+$$||' |sort |uniq)
 
 #---------------------------------------------------------------------------------
 # options for code generation
@@ -123,6 +123,8 @@ export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
  
 #---------------------------------------------------------------------------------
 $(BUILD):
+	@mkdir -p output
+	@echo $(DATA)
 	@[ -d $@ ] || mkdir -p $@
 	@$(MAKE) BUILD=`cd $(BUILD) && pwd` --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
