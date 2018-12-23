@@ -27,6 +27,7 @@
 #define PAGE_FLIP_SIZE 0xa000
 #define BPP 2
 #define BPP_POW 1
+#define FOV_POW 7
 
 //DMA OFFSETS
 #define DMA0_SRC 0xb0
