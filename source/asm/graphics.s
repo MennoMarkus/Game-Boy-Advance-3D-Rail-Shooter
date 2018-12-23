@@ -18,6 +18,8 @@
 @@ - m3_drawTriangleClipped
 @@      |- m3_drawTriangleClippedBottom
 @@      |- m3_drawTriangleClippedTop
+@@ - m3_drawTriangleClipped3D
+@@      |- m3_drawTriangleClipped
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 @@ ----------FUNCTIONS---------- @@
@@ -970,78 +972,37 @@ m3_drawTriangleClippedTop:
 .global m3_drawTriangleClipped3D
 .type m3_drawTriangleClipped3D STT_FUNC
 m3_drawTriangleClipped3D:
-    mov r12, lr                     @@ Save link register
-    push {r4-r12}
+    mov r12, lr
+	push {r4-r12}
+	ldr r12, =LUT_DIVISION
+                                        @@ Vertex1 to screen pos
+    lsl r1, r1, #FOV_POW                @@ x1 * fov
+    lsl r2, r2, #FOV_POW                @@ y1 * fov
+	ldr r3, [r12, r3, lsl #2]           @@ Load 1 / z1
+	smull r9, r1, r1, r3                @@ (x1 * fov) / z1
+	smull r9, r2, r2, r3                @@ (y1 * fov) / z1
+	add r1, r1, #CANVAS_WIDTH/2         @@ sX1 = (x1 * fov) / z1 + centerScreenX
+	add r2, r2, #CANVAS_HEIGHT/2        @@ sY1 = (y1 * fov) / z1 + centerScreenY
+		
+	add r10, sp, #36                    @@ Get offset into the stack
+	ldmia r10, {r3-r8, r10}             @@ Load Vertex2, Vertex3 and colour
 
-    lsl r1, r1, #8
-    lsl r2, r2, #8
-    adds r3, r3, #10                @@ Move z by 10
-    bmi .L_drawTriangleClipped3DEnd
+                                        @@ Vertex2 to screen pos
+    lsl r3, r3, #FOV_POW                @@ x2 * fov
+    lsl r4, r4, #FOV_POW                @@ y2 * fov
+	ldr r5, [r12, r5, lsl #2]           @@ Load 1 / z2
+	smull r9, r3, r3, r5                @@ (x2 * fov) / z2
+	smull r9, r4, r4, r5                @@ (y2 * fov) / z2
+	add r3, r3, #CANVAS_WIDTH/2         @@ sX2 = (x2 * fov) / z2 + centerScreenX
+	add r4, r4, #CANVAS_HEIGHT/2        @@ sY2 = (y2 * fov) / z2 + centerScreenY
 
-    ldr r12, =LUT_DIVISION          @@ Load (1 / v1.z)
-    ldr r11, [r12, r3, lsl #2]      @@ /
-
-    smull r3, r1, r1, r11           @@ V1.x /= v1.z (r3 is trashed)
-    smull r3, r2, r2, r11           @@ V1.y /= v1.z (r3 is trashed)
-
-    mov r9, #CANVAS_WIDTH/2         @@ Prepare canvas center x
-    mov r10, #CANVAS_HEIGHT/2       @@ Prepare canvas center y
-
-    add r1, r9, r1                  @@ V1.x = Canvas center x + V1.x
-    add r2, r10, r2                 @@ V1.y = Canvas center y + V1.y
-
-    @DONT'TOUCHIE r0, r1, r2, r9, r10, r12
-
-    add r11, sp, #36+0              @@ Get stack offset adress
-    ldmia r11, {r3, r4, r5}         @@ Load v2.x, v2.y, v2.z from stack
-
-    lsl r3, r3, #8
-    lsl r4, r4, #8
-    adds r5, r5, #10                @@ Move z by 10
-    bmi .L_drawTriangleClipped3DEnd
-
-    ldr r11, [r12, r5, lsl #2]      @@ Load (1 / v2.z)
-
-    smull r5, r3, r3, r11           @@ V2.x /= v2.z (r5 is trashed)
-    smull r5, r4, r4, r11           @@ V2.y /= v2.z (r5 is trashed)
-
-    add r3, r9, r3                  @@ V2.x = Canvas center x + V2.x
-    add r4, r10, r4                 @@ V2.y = Canvas center y + V2.y
-
-    @DONT'TOUCHIE r0, r1, r2, r3, r4, r9, r10, r12
-
-    add r11, sp, #36+12             @@ Get stack offset adress
-    ldmia r11, {r5, r6, r11}        @@ Load v3.x, v3.y, v3.z from stack
-
-    lsl r5, r5, #8
-    lsl r6, r6, #8
-    adds r11, r11, #10              @@ Move z by 10
-    bmi .L_drawTriangleClipped3DEnd
-
-    ldr r11, [r12, r11, lsl #2]     @@ Load (1 / v3.z)
-
-    smull r12, r5, r5, r11          @@ V3.x /= v3.z (r12 is trashed)
-    smull r12, r6, r6, r11          @@ V3.y /= v3.z (r12 is trashed)
-
-    add r5, r9, r5                  @@ V3.x = Canvas center x + V3.x
-    add r6, r10, r6                 @@ V3.y = Canvas center y + V3.y
-
-    @DONT'TOUCHIE r0, r1, r2, r3, r4, r5, r6
-
-    ldr r10, [sp, #(36+24)]         @@ Load color 
-
-    sub r7, r3, r1
-    sub r8, r4, r2
-    sub r9, r5, r1
-    sub r11, r6, r2
-
-    mul r7, r7, r11
-    mul r8, r8, r9
-    subs r7, r7, r8
-
-    bmi .G_drawTriangleClippedAsm    @@ Draw triangle
-
-.L_drawTriangleClipped3DEnd:
-    pop {r4-r12}
-    bx r12                           @@ Return
-
+                                        @@ Vertex3 to screen pos
+    lsl r6, r6, #FOV_POW                @@ x3 * fov
+    lsl r7, r7, #FOV_POW                @@ y3 * fov
+	ldr r8, [r12, r8, lsl #2]           @@ Load 1 / z3
+	smull r9, r5, r6, r8                @@ (x3 * fov) / z3
+	smull r9, r6, r7, r8                @@ (y3 * fov) / z3
+	add r5, r5, #CANVAS_WIDTH/2         @@ sX3 = (x3 * fov) / z3 + centerScreenX
+	add r6, r6, #CANVAS_HEIGHT/2        @@ sY3 = (y3 * fov) / z3 + centerScreenY
+	
+	b .G_drawTriangleClippedAsm         @@ Draw 2d triangle
