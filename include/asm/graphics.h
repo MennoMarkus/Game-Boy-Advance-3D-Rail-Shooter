@@ -120,6 +120,7 @@ static inline void drawTriangleClipped(u32 vramAdress, s32 x1, s32 y1, s32 x2, s
     #endif
 }
 
+// TODO: properly port to mode 5
 static inline void drawTriangleClipped3D(u32 vramAdress, s32 x1, s32 y1, s32 z1, s32 x2, s32 y2, s32 z2, s32 x3, s32 y3, s32 z3, u32 color16Addr)
 {
     #if GRAPHICS_MODE == 3
@@ -127,4 +128,66 @@ static inline void drawTriangleClipped3D(u32 vramAdress, s32 x1, s32 y1, s32 z1,
     #elif GRAPHICS_MODE == 5
     m3_drawTriangleClipped3D(vramAdress, x1, y1, z1, x2, y2, z2, x3, y3, z3, color16Addr);
     #endif
+}
+
+// TODO: port to assembly
+static inline void swap(s32& val1, s32& val2) {
+    u32 temp = val1;
+    val1 = val2;
+    val2 = temp;
+}
+
+// TODO: port to assembly
+static inline void drawTriangle3DClipped(u32 vramAdress, s32 x1, s32 y1, s32 z1, s32 x2, s32 y2, s32 z2, s32 x3, s32 y3, s32 z3, u32 color16Addr) {
+    if (z1 < z2){
+        swap(x1,x2);
+        swap(y1,y2);
+        swap(z1,z2);
+    }
+    if (z2 < z3){
+        swap(x2,x3);
+        swap(y2,y3);
+        swap(z2,z3);
+    }
+    if (z1 < z2){
+        swap(x1,x2);
+        swap(y1,y2);
+        swap(z1,z2);
+    }
+ 
+    if (z1 < NEAR_PLANE){
+        //Do nothing, whole triangle is clipped
+        return;
+    }else if (z2 < NEAR_PLANE){
+        //Clip 2 vertices, one resulting triangle drawn
+        s32 lerptemp = (z1 - NEAR_PLANE)<<16;
+        s32 lerpmult1 = lerptemp / (z1 - z2);
+        s32 lerpmult2 = lerptemp / (z1 - z3);
+       
+        s32 dx2 = x1+(((x2-x1)*lerpmult1)>>16);
+        s32 dy2 = y1+(((y2-y1)*lerpmult1)>>16);
+        s32 dz2 = z1+(((z2-z1)*lerpmult1)>>16);
+        s32 dx3 = x1+(((x3-x1)*lerpmult2)>>16);
+        s32 dy3 = y1+(((y3-y1)*lerpmult2)>>16);
+        s32 dz3 = z1+(((z3-z1)*lerpmult2)>>16);
+ 
+        drawTriangleClipped3D(vramAdress, x1,y1,z1, dx2,dy2,dz2,dx3,dy3,dz3, color16Addr);
+    }else if (z3 < NEAR_PLANE){
+        //Clip one vertex, two resulting triangles drawn
+        s32 lerpmult1 = ((z1 - NEAR_PLANE)<<16) / (z1 - z3);
+        s32 lerpmult2 = ((z2 - NEAR_PLANE)<<16) / (z2 - z3);
+ 
+        s32 dx3 = x1+(((x3-x1)*lerpmult1)>>16);
+        s32 dy3 = y1+(((y3-y1)*lerpmult1)>>16);
+        s32 dz3 = z1+(((z3-z1)*lerpmult1)>>16);
+        s32 dx4 = x2+(((x3-x2)*lerpmult2)>>16);
+        s32 dy4 = y2+(((y3-y2)*lerpmult2)>>16);
+        s32 dz4 = z2+(((z3-z2)*lerpmult2)>>16);
+ 
+        drawTriangleClipped3D(vramAdress, x1,y1,z1, x2,y2,z2,dx3,dy3,dz3, color16Addr);
+        drawTriangleClipped3D(vramAdress, x2,y2,z2, dx4,dy4,dz4,dx3,dy3,dz3, color16Addr);
+    }else{
+        //No clipping
+        drawTriangleClipped3D(vramAdress, x1,y1,z1, x2,y2,z2, x3,y3,z3, color16Addr);
+    }
 }
