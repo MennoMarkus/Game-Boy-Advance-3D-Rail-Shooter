@@ -1004,5 +1004,20 @@ m3_drawTriangleClipped3D:
 	smull r9, r6, r7, r8                @@ (y3 * fov) / z3
 	add r5, r5, #CANVAS_WIDTH/2         @@ sX3 = (x3 * fov) / z3 + centerScreenX
 	add r6, r6, #CANVAS_HEIGHT/2        @@ sY3 = (y3 * fov) / z3 + centerScreenY
-	
+
+#if BACKFACE_CULLING == 1
+    sub r7, r3, r1                      @@ Get triangle side vectors
+    sub r8, r4, r2                      @@ /
+    sub r9, r5, r1                      @@ /
+    sub r11, r6, r2                     @@ /
+
+    mul r7, r7, r11                     @@ Calculate cross product
+    mul r8, r8, r9                      @@ /
+    subs r7, r7, r8                     @@ / 
+
+    bmi .G_drawTriangleClippedAsm       @@ Draw 2d triangle, if facing camera
+    pop {r4-r12}                        @@ Return
+    bx r12                              @@ /
+#else
 	b .G_drawTriangleClippedAsm         @@ Draw 2d triangle
+#endif
