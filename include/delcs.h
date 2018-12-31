@@ -28,6 +28,8 @@
 #define BPP 2
 #define BPP_POW 1
 #define FOV_POW 7
+#define NEAR_PLANE 20
+#define BACKFACE_CULLING 0
 
 //DMA OFFSETS
 #define DMA0_SRC 0xb0
