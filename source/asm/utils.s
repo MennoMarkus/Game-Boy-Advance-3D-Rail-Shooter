@@ -4,6 +4,9 @@
 @@ - startTimer
 @@ - stopTimer
 @@ - lutDiv
+@@ - noCashPrintFlush
+@@      |- noCashPrintBuffer
+@@ - noCashPrint
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 @@ ----------FUNCTIONS---------- @@
@@ -66,3 +69,69 @@ lutDiv:
     ldr r2, [r2, r1, lsl #2]
     smull r3, r0, r0, r2
     bx lr
+
+
+@@ Parameters: void
+@@ Return: void
+.section .ewram, "ax", %progbits
+.align 2
+.thumb
+.global noCashPrintBuffer
+.global noCashPrintFlush
+.type noCashPrintFlush STT_FUNC
+noCashPrintFlush:
+    mov r12,r12                     @@ First id  
+    b .L_message_end                @@ Skip data and continue excecution at code
+    .hword	0x6464                  @@ Second id
+    .hword  0                       @@ Flags
+noCashPrintBuffer:                  @@ Message data buffer
+    .space 82                       @@ /
+    .L_message_end:                 @@ Return
+    bx lr                           @@ /
+
+
+@@ Parameters: (r0, const char* str)
+@@ Comments: The string may contain parameters, defined as %param%.
+@@              - r0,r1,r2,...,r15  show register content (displayed as 32bit Hex number)
+@@              - sp,lr,pc          alias for r13,r14,r15
+@@              - scanline          show current scanline number
+@@              - frame             show total number of frames since coldboot
+@@              - totalclks         show total number of clock cycles since coldboot
+@@              - lastclks          show number of cycles since previous lastclks (or zeroclks)
+@@              - zeroclks          resets the 'lastclks' counter
+@@ Return: void
+.section .rodata, "x", %progbits
+.align 2
+.thumb
+.global noCashPrint
+.type noCashPrint STT_FUNC
+noCashPrint:
+    push {lr}
+    ldr r1, =noCashPrintBuffer      @@ Load buffer address
+    ldr r2, =noCashPrintFlush       @@ Load noCashPrintFlush function address
+    mov r12, r2                     @@ /
+
+.L_noCashPrintLoop:
+    mov r2, #0
+
+.L_noCashPrintCopy:
+    ldrb r3, [r0, r2]               @@ Load string char
+    strb r3, [r1, r2]               @@ Write string char to buffer
+    cmp r3, #0                      @@ If (string char == "\0"):
+    beq .L_noCashPrintFlush         @@ End of string, go print the buffer to the console
+
+    add r2, r2, #1                  @@ Copy 80 characters, go print the buffer to the console after
+    cmp r2, #80                     @@ /
+    bne .L_noCashPrintCopy          @@ /
+
+.L_noCashPrintFlush:
+    bl .L_noCashPrintFlushFar       @@ Set return address to here, go to noCashPrintFlush
+
+    add r0, r0, r2                  @@ Move forward in the string to where the copy left off
+    cmp r3, #0                      @@ If (string char != "\0"):
+    bne .L_noCashPrintLoop          @@ Continue printing
+
+    pop {r1}
+    bx r1
+.L_noCashPrintFlushFar:
+    bx r12                          @@ Go to noCashPrintFlush
