@@ -14,14 +14,14 @@ int main()
     initGraphics();
 
     while(true) {
-        vramAddr = startDraw(vramAddr);
+        //vramAddr = startDraw(vramAddr);
         clearScr(vramAddr, (u32)(&clrScreenColor));
-        startTimer();
         keyPoll();
 
         // Rendering
         drawObjModel(vramAddr, camX, camY, camZ);
-        
+
+        noCashStartTimer();
         // Movement
         if (keyIsDown(KEY_RIGHT))
             camY--;
@@ -38,10 +38,11 @@ int main()
 
         // Pause
         if (keyIsDown(KEY_START)) {
-            volatile u32 time = stopTimer();
             BREAK
-        } else 
-            stopTimer();
+        }
+
+        noCashStopTimer();
+        vramAddr = startDraw(vramAddr);
     }
 
 	return 0;
