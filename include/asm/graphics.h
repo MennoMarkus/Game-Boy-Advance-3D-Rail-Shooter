@@ -125,6 +125,6 @@ static inline void drawTriangleClipped3D(u32 vramAdress, s32 x1, s32 y1, s32 z1,
     #if GRAPHICS_MODE == 3
     m3_drawTriangleClipped3D(vramAdress, x1, y1, z1, x2, y2, z2, x3, y3, z3, color16Addr);
     #elif GRAPHICS_MODE == 5
-    m3_drawTriangleClipped3D(vramAdress, x1, y1, z1, x2, y2, z2, x3, y3, z3, color16Addr);
+    m3_drawTriangleClipped3D(vramAdress, y1, x1 / 2, z1, y2, x2 / 2, z2, y3, x3 / 2, z3, color16Addr);
     #endif
 }
