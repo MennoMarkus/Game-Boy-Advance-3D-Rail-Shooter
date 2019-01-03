@@ -38,7 +38,7 @@ initGraphics:
 #if GRAPHICS_MODE == 3
 	add r1, r1, #0x3				@@ Load value #403 (0000000110010011) to enable gfx mode 3, and bg 2. See lcd control memory map.
 #elif GRAPHICS_MODE == 5
-    add r1, r1, #0x5				@@ Load value #405 (0000000110010101) to enable gfx mode 5, and bg 2. See lcd control memory map.
+    add r1, r1, #0x15				@@ Load value #405 (0000000110010101) to enable gfx mode 5, and bg 2. See lcd control memory map.
 #endif
     strh r1, [r0]					@@ Write value to memory
 
@@ -53,6 +53,7 @@ initGraphics:
 	strh r0, [r2, #0x26]			@@ /
 #endif
     bx lr					        @@ Return
+.size initGraphics, .-initGraphics
 
 
 @@ Parameters: (r0, vram addr)
@@ -79,6 +80,7 @@ startDraw:
     strh r2, [r1]
 #endif
     bx lr                           @@ Return
+.size startDraw, .-startDraw
 
 
 @@ Parameters: (r0, vram addr), (r1, color addr)
@@ -106,6 +108,7 @@ clearScr:
 #endif
 
     bx lr                           @@ Return
+.size clearScr, .-clearScr
 
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
@@ -126,6 +129,7 @@ m3_drawPixel:
 
     strh r3, [r0, r12]          @@ write to vram + pixel address offset
     bx lr					    @@ Return
+.size m3_drawPixel, .-m3_drawPixel
 
 
 @@ Parameters: (r0, vram addr), (r1, x1), (r2, y1), (r3, x2), (sp #0, y2) (sp #4, 16 bit color)
@@ -188,6 +192,7 @@ m3_drawLine:
 .L_drawLineLoopEnd:
     pop {r4, r5, r8-r10}
     bx lr					    @@ Return
+.size m3_drawLine, .-m3_drawLine
 
 
 @@ Parameters: (r0, vram addr), (r1, x), (r2, y), (r3, signed width), (sp #0, 16 bit color addr)
@@ -215,6 +220,7 @@ m3_drawHorzLine:
     str r3, [r1, #DMA0_CNT]         @@ /
 
     bx lr                           @@ Return
+.size m3_drawHorzLine, .-m3_drawHorzLine
 
 
 @@ Parameters: (r0, vram addr), (r1, x), (r2, y), (r3, signed height), (sp #0, 16 bit color addr)
@@ -241,6 +247,7 @@ m3_drawVertLine:
     subs r3, #1                     @@ Height -= 1
     bne .L_drawVertLineLoopY
     bx lr                           @@ Return
+.size m3_drawVertLine, .-m3_drawVertLine
 
 
 @@ Parameters: (r0, vram addr), (r1, center x), (r2, center y), (r3, half width), (sp #0, half height) (sp #4, 32 bit color addr)
@@ -277,6 +284,7 @@ m3_drawRectFromCenter:
 	bne .L_drawRectCenterYLoop	    @@ /
     pop {r4}
     bx lr                           @@ Return
+.size m3_drawRectFromCenter, .-m3_drawRectFromCenter
 
 
 @@ Parameters: (r0, vram addr), (r1, top left x), (r2, top left y), (r3, width), (sp #0, height) (sp #4, 16 bit color addr)
@@ -309,6 +317,7 @@ m3_drawRectFromCorner:
 	bne .L_drawRectCornerYLoop	    @@ /
     pop {r4}
     bx lr                           @@ Return
+.size m3_drawRectFromCorner, .-m3_drawRectFromCorner
 
 
 @@ Parameters: (r0, vram addr), (r1, top left x), (r2, top left y), (r3, width), (sp #0, height), (sp #4, 16 bit color addr)
@@ -358,6 +367,7 @@ m3_drawRectEmpty:
     bne .L_drawRectEmptyYLoop2
     pop {r4, r5}
     bx lr                           @@ Return
+.size m3_drawRectEmpty, .-m3_drawRectEmpty
 
 
 @@ Parameters: (r0, vram addr), (r1, center x), (r2, center y), (r3, radius), (sp #0, 16 bit color addr)
@@ -432,6 +442,7 @@ m3_drawCircle:
     
     pop {r4-r10}
     bx lr                           @@ Return
+.size m3_drawCircle, .-m3_drawCircle
 
 
 @@ Parameters: (r0, vram addr), (r1, center x), (r2, center y), (r3, radius), (sp #0, 16 bit color)
@@ -503,6 +514,7 @@ m3_drawCircleEmpty:
     
     pop {r4-r9}
     bx lr                           @@ Return
+.size m3_drawCircleEmpty, .-m3_drawCircleEmpty
 
 
 @@ Parameters: (r0, vram addr), (r1, x1), (r2, y1), (r3, x2), (sp #0, y2), (sp #4, x3), (sp #8, y3), (sp #12, 16 bit color addr)
@@ -598,6 +610,7 @@ m3_drawTriangle:
 .L_drawTriangleEnd:
     pop {r4-r12}
     bx r12                              @@ Return
+.size m3_drawTriangle, .-m3_drawTriangle
 
 
 @@ Parameters: (r0, vram addr), (r5, x1), (r6, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
@@ -648,6 +661,7 @@ m3_drawTriangleBottom:
     bge .L_drawTriangleBottomLoop           @@ Loop while (curY >= y2/y3)
 .L_drawTriangleBottomLoopEnd:
     bx lr                                   @@ Return
+.size m3_drawTriangleBottom, .-m3_drawTriangleBottom
 
 
 @@ Parameters: (r0, vram addr), (r1, x1), (r2, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
@@ -701,6 +715,7 @@ m3_drawTriangleTop:
 .L_drawTriangleTopLoopEnd:
     pop {r4-r7}                             @@ Return
     bx lr                                   @@ /
+.size m3_drawTriangleTop, .-m3_drawTriangleTop
 
 
 @@ Parameters: (r0, vram addr), (r1, x1), (r2, y1), (r3, x2), (sp #0, y2), (sp #4, x3), (sp #8, y3), (sp #12, 16 bit color addr)
@@ -798,6 +813,7 @@ m3_drawTriangleClipped:
 .L_drawTriangleClippedEnd:
     pop {r4-r12}
     bx r12                              @@ Return
+.size m3_drawTriangleClipped, .-m3_drawTriangleClipped
 
 
 @@ Parameters: (r0, vram addr), (r5, x1), (r6, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
@@ -877,6 +893,7 @@ m3_drawTriangleClippedBottom:
     bge .L_drawTriangleClippedBottomLoop    @@ Loop while (curY >= y2/y3)
 .L_drawTriangleClippedBottomLoopEnd:
     bx lr                                   @@ Return
+.size m3_drawTriangleClippedBottom, .-m3_drawTriangleClippedBottom
 
 
 @@ Parameters: (r0, vram addr), (r1, x1), (r2, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
@@ -959,6 +976,7 @@ m3_drawTriangleClippedTop:
 .L_drawTriangleClippedTopLoopEnd:
     pop {r4-r7}                             @@ Return
     bx lr                                   @@ /
+.size m3_drawTriangleClippedTop, .-m3_drawTriangleClippedTop
 
 
 @@ Parameters: (r0, vram addr), (r1, x1),       (r2, y1),       (r3, z1), 
@@ -972,6 +990,9 @@ m3_drawTriangleClippedTop:
 .global m3_drawTriangleClipped3D
 .type m3_drawTriangleClipped3D STT_FUNC
 m3_drawTriangleClipped3D:
+    cmp r3, #NEAR_PLANE
+    bxlt lr
+
     mov r12, lr
 	push {r4-r12}
 	ldr r12, =LUT_DIVISION
@@ -1016,8 +1037,10 @@ m3_drawTriangleClipped3D:
     subs r7, r7, r8                     @@ / 
 
     bmi .G_drawTriangleClippedAsm       @@ Draw 2d triangle, if facing camera
-    pop {r4-r12}                        @@ Return
-    bx r12                              @@ /
 #else
 	b .G_drawTriangleClippedAsm         @@ Draw 2d triangle
 #endif
+.L_drawTriangleClipped3dEnd:
+    pop {r4-r12}                        @@ Return
+    bx r12                              @@ /
+.size m3_drawTriangleClipped3D, .-m3_drawTriangleClipped3D
