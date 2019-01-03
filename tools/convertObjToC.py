@@ -78,14 +78,29 @@ for name, material in model.materials.items():
 
         # Calculate diffuse
         if applyDirectionalLight:
-            dotX = (triangle[1] * triangle[5] - triangle[2] * triangle[4]) * directionalLightX
-            dotY = (triangle[2] * triangle[3] - triangle[0] * triangle[5]) * directionalLightY
-            dotZ = (triangle[0] * triangle[4] - triangle[1] * triangle[3]) * directionalLightZ
+            triangleSide1X = triangle[3] - triangle[0]
+            triangleSide1Y = triangle[4] - triangle[1]
+            triangleSide1Z = triangle[5] - triangle[2]
+            triangleSide2X = triangle[6] - triangle[0]
+            triangleSide2Y = triangle[7] - triangle[1]
+            triangleSide2Z = triangle[8] - triangle[2]
+
+            normalX = (triangleSide1Y * triangleSide2Z) - (triangleSide1Z * triangleSide2Y)
+            normalY = (triangleSide1Z * triangleSide2X) - (triangleSide1X * triangleSide2Z)
+            normalZ = (triangleSide1X * triangleSide2Y) - (triangleSide1Y * triangleSide2X)
+            normalLen = math.sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ)
+            normalX /= normalLen
+            normalY /= normalLen
+            normalZ /= normalLen
+
+            dotX = normalX * directionalLightX
+            dotY = normalY * directionalLightY
+            dotZ = normalZ * directionalLightZ
             diffuse = max(dotX + dotY + dotZ, 0.0)
 
-            colourR *= diffuse * directionalLightR
-            colourG *= diffuse * directionalLightG
-            colourB *= diffuse * directionalLightB
+            colourR = max(0.0, min(colourR * diffuse * directionalLightR, 1.0))
+            colourG = max(0.0, min(colourG * diffuse * directionalLightG, 1.0))
+            colourB = max(0.0, min(colourB * diffuse * directionalLightB, 1.0))
 
         # Calculate color
         hexColour =  (int(colourB * 31) << 10) 
