@@ -16,7 +16,7 @@ print(os.getcwd())
 inputFileName = "../res/objModel.obj"
 outputSrcFileName = "../source/objModel.s"
 outputIncFileName = "../include/objModel.h"
-applyDirectionalLight = False
+applyDirectionalLight = True
 directionalLightX = 1
 directionalLightY = 1
 directionalLightZ = 1
@@ -71,6 +71,21 @@ for name, material in model.materials.items():
         triangle.append(round(material.vertices[arrayOffset + positionOffset + 1 + vertexOffset * 2] * scaleY))
         triangle.append(round(material.vertices[arrayOffset + positionOffset + 2 + vertexOffset * 2] * scaleZ))
 
+        # Sort triangle vertices
+        if triangle[5] > triangle[2]:
+            triangle[0], triangle[3] = triangle[3], triangle[0]
+            triangle[1], triangle[4] = triangle[4], triangle[1]
+            triangle[2], triangle[5] = triangle[5], triangle[2]
+        if triangle[8] > triangle[5]:
+            triangle[3], triangle[6] = triangle[6], triangle[3]
+            triangle[4], triangle[7] = triangle[7], triangle[4]
+            triangle[5], triangle[8] = triangle[8], triangle[5]
+
+        if triangle[5] > triangle[2]:
+            triangle[0], triangle[3] = triangle[3], triangle[0]
+            triangle[1], triangle[4] = triangle[4], triangle[1]
+            triangle[2], triangle[5] = triangle[5], triangle[2]
+
         # Colour
         colourR = material.diffuse[0]
         colourG = material.diffuse[1]
@@ -117,7 +132,7 @@ def zSort(triangle):
     return ((float(triangle[2]) + float(triangle[5]) + float(triangle[8])) / 3)
 
 for triangle in triangles:
-    triangles.sort(key=zSort)
+    triangles.sort(key=zSort, reverse=False)
 
 # Format text
 f = open(outputSrcFileName, "w+")
@@ -150,9 +165,9 @@ f.write('extern "C" const s16 OBJ_MODEL[OBJ_MODEL_SIZE][10];\n\n')
 
 f.write("void drawObjModel(u32 vramAdress, s32 camX, s32 camY, s32 camZ) {\n")
 f.write("    for (int tri = 0; tri < OBJ_MODEL_SIZE; tri++) {\n")
-f.write("        drawTriangleClipped3D(vramAdress,   -OBJ_MODEL[tri][2] + camX, OBJ_MODEL[tri][1] + camY, OBJ_MODEL[tri][0] + camZ,\n")
-f.write("                                            -OBJ_MODEL[tri][5] + camX, OBJ_MODEL[tri][4] + camY, OBJ_MODEL[tri][3] + camZ,\n")
-f.write("                                            -OBJ_MODEL[tri][8] + camX, OBJ_MODEL[tri][7] + camY, OBJ_MODEL[tri][6] + camZ,\n")
+f.write("        drawTriangle3DClipped(vramAdress,   OBJ_MODEL[tri][0] + camX, OBJ_MODEL[tri][1] + camY, OBJ_MODEL[tri][2] + camZ,\n")
+f.write("                                            OBJ_MODEL[tri][3] + camX, OBJ_MODEL[tri][4] + camY, OBJ_MODEL[tri][5] + camZ,\n")
+f.write("                                            OBJ_MODEL[tri][6] + camX, OBJ_MODEL[tri][7] + camY, OBJ_MODEL[tri][8] + camZ,\n")
 f.write("                                            (u32)(&OBJ_MODEL[tri][9]));\n")
 f.write("    }\n")
 f.write("}\n")
