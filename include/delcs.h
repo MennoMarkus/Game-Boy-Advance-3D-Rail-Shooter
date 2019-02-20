@@ -1,4 +1,5 @@
 #define GRAPHICS_MODE 5
+#define PREPROCESSED 0
 
 #define ADDR_EWRAM  0x2000000
 #define ADDR_IWRAM  0x3000000
@@ -18,18 +19,20 @@
 #elif GRAPHICS_MODE == 5
 #define CANVAS_WIDTH 160
 #define CANVAS_HEIGHT 120
-#define PIXEL_COUNT 0x5000
+#define PIXEL_COUNT 0x4B00
 
 #endif
 
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 160
-#define PAGE_FLIP_SIZE 0xa000
+#define DUBBLE_BUFFER 1
 #define BPP 2
 #define BPP_POW 1
+
 #define FOV_POW 7
 #define NEAR_PLANE 20
 #define BACKFACE_CULLING 0
+#define TRI_LOOP_UNROLL 0,1,2,3,4,5,6,7,8,9
 
 //DMA OFFSETS
 #define DMA0_SRC 0xb0
@@ -65,6 +68,7 @@
 #define KEY_ANY     0x3FF
 
 //DEBUG
+#define DEBUG 1
 #define BREAK __asm ("mov r11, r11");
 #define ASM_BREAK mov r11, r11
 #define TODO 

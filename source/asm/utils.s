@@ -20,8 +20,9 @@
 .global startTimer
 .type startTimer STT_FUNC
 startTimer:
+#if DEBUG == 1
     mov r0, #0
-    mov r1, #ADDR_IO                @@ Load timers start adress
+    mov r1, #ADDR_IO                @@ Load timers start address
     add r1, r1, #0x100              @@ /
 
     strh r0, [r1, #0x8]             @@ Write 0 to timer 2 counter
@@ -33,7 +34,9 @@ startTimer:
     strh r0, [r1, #0xE]             @@ Write to timer 3 control, to start timer and enable cascade (overflow)
     mov r0, #0x80
     strh r0, [r1, #0xA]             @@ Write to timer 2, to start timer
+#endif
     bx lr                           @@ Return
+.size startTimer, .-startTimer
 
 
 @@ Parameters: void
@@ -43,8 +46,9 @@ startTimer:
 .global stopTimer
 .type stopTimer STT_FUNC
 stopTimer:
+#if DEBUG == 1
     mov r0, #0
-    mov r1, #ADDR_IO                @@ Load timers start adress
+    mov r1, #ADDR_IO                @@ Load timers start address
     add r1, r1, #0x100              @@ /
 
     strh r0, [r1, #0xA]             @@ Write to timer 2 control to stop timer
@@ -52,12 +56,14 @@ stopTimer:
     ldrh r0, [r1, #0xC]             @@ Read timer 3 count
     ldrh r2, [r1, #0x8]             @@ Read timer 2 count
     orr r0, r2, r0, lsl #16         @@ Combine timer 2 and 3 count
+#endif
     bx lr                           @@ Return
+.size stopTimer, .-stopTimer
 
 
 @@ Parameters: (r0, numerator), (r1, denominator)
 @@ Comments: Do not use unless you have good reasons to. Swi 0x6000 is propabily faster otherwise.
-@@ TODO: Inline assembly
+@@ TODO: Use inline assembly
 @@ Return: (r0, result)
 .section .iwram, "ax", %progbits
 .align 2
@@ -67,8 +73,9 @@ stopTimer:
 lutDiv:
     ldr r2, =LUT_DIVISION
     ldr r2, [r2, r1, lsl #2]
-    smull r3, r0, r0, r2
+    smull r3, r0, r2, r0
     bx lr
+.size lutDiv, .-lutDiv
 
 
 @@ Parameters: void
@@ -80,6 +87,7 @@ lutDiv:
 .global noCashPrintFlush
 .type noCashPrintFlush STT_FUNC
 noCashPrintFlush:
+#if DEBUG == 1
     mov r12,r12                     @@ First id  
     b .L_message_end                @@ Skip data and continue excecution at code
     .hword	0x6464                  @@ Second id
@@ -87,7 +95,9 @@ noCashPrintFlush:
 noCashPrintBuffer:                  @@ Message data buffer
     .space 82                       @@ /
     .L_message_end:                 @@ Return
+#endif
     bx lr                           @@ /
+.size noCashPrintFlush, .-noCashPrintFlush
 
 
 @@ Parameters: (r0, const char* str)
@@ -100,12 +110,12 @@ noCashPrintBuffer:                  @@ Message data buffer
 @@              - lastclks          show number of cycles since previous lastclks (or zeroclks)
 @@              - zeroclks          resets the 'lastclks' counter
 @@ Return: void
-.section .rodata, "x", %progbits
 .align 2
 .thumb
 .global noCashPrint
 .type noCashPrint STT_FUNC
 noCashPrint:
+#if DEBUG == 1
     push {lr}
     ldr r1, =noCashPrintBuffer      @@ Load buffer address
     ldr r2, =noCashPrintFlush       @@ Load noCashPrintFlush function address
@@ -135,3 +145,7 @@ noCashPrint:
     bx r1
 .L_noCashPrintFlushFar:
     bx r12                          @@ Go to noCashPrintFlush
+#else
+    bx lr
+#endif
+.size noCashPrint, .-noCashPrint
