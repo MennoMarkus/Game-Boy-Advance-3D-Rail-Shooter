@@ -1,5 +1,27 @@
 #include "../../include/delcs.h"
 
+@@ Data available:
+@@ - GRAPHICS_BUFFER
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@ -------------DATA------------ @@
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+.data
+
+@ A ram buffer containing graphics data to be draw to the screen.
+@ 76800 bytes
+@TODO use .sbss to save on rom memory
+#if GRAPHICS_MODE == 3 && DUBBLE_BUFFER == 1
+.section .ewram
+.align 2
+.global GRAPHICS_BUFFER
+GRAPHICS_BUFFER:
+.rept 38400
+    .hword 0xFF
+.endr
+    .size GRAPHICS_BUFFER, .-GRAPHICS_BUFFER
+#endif
+
 @@ Functions available:
 @@ - m3_initGraphics
 @@ - m3_clearScr
@@ -12,14 +34,15 @@
 @@ - m3_drawRectEmpty
 @@ - m3_drawCircle
 @@ - m3_drawCircleEmpty
-@@ - m3_drawTriangle
-@@      |- m3_drawTriangleBottom
-@@      |- m3_drawTriangleTop
+@@ - m3_mirrorScreenHorz
+@@ - m3_mirrorScreenVert
+@@ - m3_drawTriangleClipped3D
+@@      |- m3_drawTriangleClipped
 @@ - m3_drawTriangleClipped
 @@      |- m3_drawTriangleClippedBottom
 @@      |- m3_drawTriangleClippedTop
-@@ - m3_drawTriangleClipped3D
-@@      |- m3_drawTriangleClipped
+@@ - setSpritePalette
+@@ - setSpriteSheet
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 @@ ----------FUNCTIONS---------- @@
@@ -34,11 +57,11 @@
 .type initGraphics STT_FUNC
 initGraphics:
     mov r0, #ADDR_IO
-    mov r1, #0x400					@@ /
+    mov r1, #0x1400					@@ /
 #if GRAPHICS_MODE == 3
-	add r1, r1, #0x3				@@ Load value #403 (0000000110010011) to enable gfx mode 3, and bg 2. See lcd control memory map.
+    add r1, r1, #0x43               @@ Load value #0x1443 to enable gfx mode 3, bg 2 and 1d sprite drawing.
 #elif GRAPHICS_MODE == 5
-    add r1, r1, #0x15				@@ Load value #405 (0000000110010101) to enable gfx mode 5, and bg 2. See lcd control memory map.
+    add r1, r1, #0x45				@@ Load value #0x1445 to enable gfx mode 5, bg 2 and 1d sprite drawing.
 #endif
     strh r1, [r0]					@@ Write value to memory
 
@@ -56,8 +79,9 @@ initGraphics:
 .size initGraphics, .-initGraphics
 
 
-@@ Parameters: (r0, vram addr)
-@@ Return: (r0, vram addr)
+@@ Parameters: (r0, graphics data addr)
+@@ Return: (r0, write graphics data addr)
+.section .iwram, "ax", %progbits
 .align 2
 .arm
 .global startDraw
@@ -73,41 +97,87 @@ startDraw:
 	cmp r2, #SCREEN_HEIGHT     		@@ Compare to last scan line number, the end of the screen and start of vblank
 	bne .L_vBlankWait				@@ /
 
-#if GRAPHICS_MODE == 5
-    eor r0, r0, #PAGE_FLIP_SIZE
+#if GRAPHICS_MODE == 5  && DUBBLE_BUFFER == 1
+    eor r0, r0, #0xa000             @@ Switch vram buffer by xor with page flip size
     ldrh r2, [r1]
     eor r2, r2, #0x10
     strh r2, [r1]
+#elif GRAPHICS_MODE == 3 && DUBBLE_BUFFER == 1
+    mov r2, #ADDR_VRAM
+    str r0, [r1, #DMA3_SRC]         @@ Write graphics buffer address to dma source address   
+    str r2, [r1, #DMA3_DST]         @@ Write vram address to dma destination address
+
+    mov r3, #0x84000000             @@ Set dma control to copy pixel 0x4b00 times
+    orr r3, r3, #0x4B00             @@ /
+    str r3, [r1, #DMA3_CNT]         @@ /
 #endif
     bx lr                           @@ Return
 .size startDraw, .-startDraw
 
 
-@@ Parameters: (r0, vram addr), (r1, color addr)
+@@ Parameters: (r0, graphics addr), (r1, color addr), (r2, clear mode)
+@@ Comments: Available clear modes - (0, none,  clears entire screen)
+@@                                 - (1, top,   clears top half for vert/diag mirroring)
+@@                                 - (2, left,  clears left side for horz mirroring)
 @@ Return: void
+.section .iwram, "ax", %progbits
 .align 2
 .arm
 .global clearScr
 .type clearScr STT_FUNC
 clearScr:
-    mov r2, #ADDR_IO
-    str r1, [r2, #DMA0_SRC]         @@ Write color address to dma source address   
-    str r0, [r2, #DMA0_DST]         @@ Write vram address to dma destination address
-
-    mov r3, #0x85000000             @@ Set dma control to copy colour 0x2580 times
-    orr r3, r3, #0x2580             @@ /
-    str r3, [r2, #DMA0_CNT]         @@ /
+    mov r3, #ADDR_IO
+    str r1, [r3, #DMA3_SRC]             @@ Write color address to dma source address   
+    str r0, [r3, #DMA3_DST]             @@ Write graphics address to dma destination address
 
 #if GRAPHICS_MODE == 3
-    add r0, r0, #0x9600             @@ Write vram address + 0x2580 * BBP * 2 to dma destination address
-    str r0, [r2, #DMA0_DST]         @@ /
+    mov r1, #0x85000000                 @@ Set dma control to copy colour
 
-    mov r3, #0x85000000             @@ Set dma control to copy colour (amount of pixel - (0x2580 / 2)) times
-    orr r3, r3, #0x2580             @@ /
-    str r3, [r2, #DMA0_CNT]         @@ /
+    cmp r2, #1                          @@ Clear left side if left mode is selected (clear mode == 2)
+    bhi .L_clearScrLeft                 @@ /
+
+    orrne r1, r1, #0x4B00               @@ 0x4b00 times, a full screen, if mode none is selected (clear mode == 0)
+    orreq r1, r1, #0x2580               @@ 0x2580 times, a half screen, if top mode is selected (clear mode == 1)
+    str r1, [r3, #DMA3_CNT]             @@ /
+    bx lr                               @@ Return
+
+.L_clearScrLeft:
+    mov r2, #CANVAS_HEIGHT              @@ Height
+.L_clearScrLeftLoop:
+    orr r1, r1, #CANVAS_WIDTH / 4       @@ Copy colour half width times
+    str r1, [r3, #DMA3_CNT]             @@ /
+
+    subs r2, #1                         @@ Height -= 1
+    add r0, r0, #CANVAS_WIDTH * BPP     @@ Move destination to next row
+    str r0, [r3, #DMA3_DST]             @@ /
+    bne .L_clearScrLeftLoop             @@ While Height > 0, copy rows
+
+    bx lr                               @@ Return
+
+#elif GRAPHICS_MODE == 5
+    mov r1, #0x85000000                 @@ Set dma control to copy colour
+    
+    cmp r2, #1                          @@ Clear top side if mode top mode is selected (clear mode == 1)
+    beq .L_clearScrLeft                 @@ //
+
+    orrlt r1, r1, #0x2580               @@ 0x2580 times, a full screen, if mode none is selected (clear mode == 0)
+    orrgt r1, r1, #0x12C0               @@ 0x12C0 times, a half screen, if left mode is selected (clear mode == 2)
+    str r1, [r3, #DMA3_CNT]             @@ /
+    bx lr                               @@ Return
+
+.L_clearScrLeft:
+    mov r2, #CANVAS_HEIGHT              @@ Height
+.L_clearScrLeftLoop:
+    orr r1, r1, #CANVAS_WIDTH / 4       @@ Copy colour half width times
+    str r1, [r3, #DMA3_CNT]             @@ /
+
+    subs r2, #1                         @@ Height -= 1
+    add r0, r0, #CANVAS_WIDTH * BPP     @@ Move destination to next row
+    str r0, [r3, #DMA3_DST]             @@ /
+    bne .L_clearScrLeftLoop             @@ While Height > 0, copy rows
+
+    bx lr                               @@ Return
 #endif
-
-    bx lr                           @@ Return
 .size clearScr, .-clearScr
 
 
@@ -116,7 +186,7 @@ clearScr:
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 
-@@ Parameters: (r0, vram addr), (r1, x), (r2, y), (r3, 16 bit color)
+@@ Parameters: (r0, graphics addr), (r1, x), (r2, y), (r3, 16 bit color)
 @@ Return: void
 .align 2
 .arm
@@ -127,18 +197,18 @@ m3_drawPixel:
     mla r12, r2, r12, r1        @@ pixel = y * CANVAS_WIDTH + x
     lsl r12, r12, #BPP_POW      @@ pixel address offset = pixel * 2 bytes per pixel
 
-    strh r3, [r0, r12]          @@ write to vram + pixel address offset
+    strh r3, [r0, r12]          @@ write to graphics address + pixel address offset
     bx lr					    @@ Return
 .size m3_drawPixel, .-m3_drawPixel
 
 
-@@ Parameters: (r0, vram addr), (r1, x1), (r2, y1), (r3, x2), (sp #0, y2) (sp #4, 16 bit color)
+@@ Parameters: (r0, graphics addr), (r1, x1), (r2, y1), (r3, x2), (sp #0, y2) (sp #4, 16 bit color)
 @@ Return: void
 @@ r1: deltaX
 @@ r2: deltaY
 @@ r3: error
 @@ r0: end address
-@@ r4: start adress
+@@ r4: start address
 @@ r5: y2
 @@ r8: colour
 @@ r9: stepX
@@ -154,8 +224,8 @@ m3_drawLine:
     ldrh r8, [sp, #(4+20)]      @@ Load values from the stack
     ldr r5, [sp, #(0+20)]       @@ /
 
-    mla r4, r2, r12, r1          @@ Caluclate start adress, y1 * CANVAS_WIDTH + x1
-    add r4, r0, r4, lsl #BPP_POW @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r4, r2, r12, r1          @@ Caluclate start address, y1 * CANVAS_WIDTH + x1
+    add r4, r0, r4, lsl #BPP_POW @@ pixel address = graphics address + pixel * bytes per pixel
     
     mov r9, #-1                 @@ stepX
     subs r1, r1, r3             @@ deltaX = x1 - x2
@@ -167,8 +237,8 @@ m3_drawLine:
     negge r2, r2                @@ if y2 >= y1: negate -deltaY
     negge r10, r10              @@ if y2 >= y1: negate stepY
 
-    mla r3, r5, r12, r3          @@ Calculate end adress, y2 * CANVAS_WIDTH + x2
-    add r0, r0, r3, lsl #BPP_POW @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r3, r5, r12, r3          @@ Calculate end address, y2 * CANVAS_WIDTH + x2
+    add r0, r0, r3, lsl #BPP_POW @@ pixel address = graphics address + pixel * bytes per pixel
     
     add r3, r1, r2              @@ error = deltaX + -deltaY
     lsl r12, r12, #BPP_POW      @@ Setup CANVAS_WIDTH * bytes per pixel
@@ -187,7 +257,7 @@ m3_drawLine:
     addgt r4, r4, r12           @@ y += stepY * CANVAS_WIDTH * bytes per pixel
     addgt r3, r3, r1            @@ error += deltaX
 
-    cmp r4, r0                  @@ loop until start adress == end adress
+    cmp r4, r0                  @@ loop until start address == end address
     bne .L_drawLineLoop
 .L_drawLineLoopEnd:
     pop {r4, r5, r8-r10}
@@ -195,7 +265,7 @@ m3_drawLine:
 .size m3_drawLine, .-m3_drawLine
 
 
-@@ Parameters: (r0, vram addr), (r1, x), (r2, y), (r3, signed width), (sp #0, 16 bit color addr)
+@@ Parameters: (r0, graphics addr), (r1, x), (r2, y), (r3, signed width), (sp #0, 16 bit color addr)
 @@ Return: void
 .align 2
 .arm
@@ -208,22 +278,22 @@ m3_drawHorzLine:
     negmi r3, r3                    @@ If width < 0: negate width
     submi r1, r1, r3                @@ If width < 0: x -= width
 
-    mla r2, r2, r12, r1             @@ pixel = y * CANVAS_WIDTH + x
-    add r2, r0, r2, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r2, r12, r2, r1             @@ pixel = y * CANVAS_WIDTH + x
+    add r2, r0, r2, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     ldr r0, [sp, #(0)]              @@ Load colour from stack
 
     mov r1, #ADDR_IO                @@ Prepare dma address base
-    str r0, [r1, #DMA0_SRC]         @@ Write color address to dma source address
-    str r2, [r1, #DMA0_DST]         @@ Write pixel address to dma destination address
+    str r0, [r1, #DMA3_SRC]         @@ Write color address to dma source address
+    str r2, [r1, #DMA3_DST]         @@ Write pixel address to dma destination address
     orr r3, r3, #0x81000000         @@ Set dma control to copy colour 'width' times
-    str r3, [r1, #DMA0_CNT]         @@ /
+    str r3, [r1, #DMA3_CNT]         @@ /
 
     bx lr                           @@ Return
 .size m3_drawHorzLine, .-m3_drawHorzLine
 
 
-@@ Parameters: (r0, vram addr), (r1, x), (r2, y), (r3, signed height), (sp #0, 16 bit color addr)
+@@ Parameters: (r0, graphics addr), (r1, x), (r2, y), (r3, signed height), (sp #0, 16 bit color addr)
 @@ Return: void
 .align 2
 .arm
@@ -237,7 +307,7 @@ m3_drawVertLine:
     submi r2, r2, r3                @@ If height < 0: y -= height
 
     mla r1, r2, r12, r1             @@ pixel = y * CANVAS_WIDTH + x
-    add r1, r0, r1, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    add r1, r0, r1, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     ldr r0, [sp, #(0)]              @@ Load colour from stack
     ldrh r0, [r0]                   @@ Get color value from addr
@@ -250,7 +320,7 @@ m3_drawVertLine:
 .size m3_drawVertLine, .-m3_drawVertLine
 
 
-@@ Parameters: (r0, vram addr), (r1, center x), (r2, center y), (r3, half width), (sp #0, half height) (sp #4, 32 bit color addr)
+@@ Parameters: (r0, graphics addr), (r1, center x), (r2, center y), (r3, half width), (sp #0, half height) (sp #4, 32 bit color addr)
 @@ Return: void
 .align 2
 .arm
@@ -265,19 +335,19 @@ m3_drawRectFromCenter:
     
     mov r12, #CANVAS_WIDTH
     mla r1, r2, r12, r1             @@ pixel = y0 * CANVAS_WIDTH + x0
-    add r0, r0, r1, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    add r0, r0, r1, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     lsl r12, r12, #BPP_POW          @@ Setup CANVAS_WIDTH * bytes per pixel
 	mov r2, r4, lsl #1  		    @@ Height = 2 * half height
 
     mov r1, #ADDR_IO                @@ Prepare dma address base
     ldr r4, [sp, #(4+4)]            @@ Load color
-    str r4, [r1, #DMA0_SRC]         @@ Write color address to dma source address
+    str r4, [r1, #DMA3_SRC]         @@ Write color address to dma source address
     orr r3, r3, #0x85000000         @@ Set dma control to copy colour 'half width' times
 
 .L_drawRectCenterYLoop:
-    str r0, [r1, #DMA0_DST]         @@ Write pixel address to dma destination address
-    str r3, [r1, #DMA0_CNT]         @@ Set dma control to copy colour 'half width' times
+    str r0, [r1, #DMA3_DST]         @@ Write pixel address to dma destination address
+    str r3, [r1, #DMA3_CNT]         @@ Set dma control to copy colour 'half width' times
 
 	add r0, r0, r12         	    @@ Move down vertically to next line
 	subs r2, r2, #1 			    @@ Height -= 1
@@ -287,7 +357,7 @@ m3_drawRectFromCenter:
 .size m3_drawRectFromCenter, .-m3_drawRectFromCenter
 
 
-@@ Parameters: (r0, vram addr), (r1, top left x), (r2, top left y), (r3, width), (sp #0, height) (sp #4, 16 bit color addr)
+@@ Parameters: (r0, graphics addr), (r1, top left x), (r2, top left y), (r3, width), (sp #0, height) (sp #4, 16 bit color addr)
 @@ Return: void
 .align 2
 .arm
@@ -298,19 +368,19 @@ m3_drawRectFromCorner:
     mov r12, #CANVAS_WIDTH
 
     mla r1, r2, r12, r1             @@ pixel = y * CANVAS_WIDTH + x
-    add r0, r0, r1, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    add r0, r0, r1, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     lsl r12, r12, #BPP_POW          @@ Setup CANVAS_WIDTH * bytes per pixel
     ldr r2, [sp, #(0+4)]            @@ Load height
 
     mov r1, #ADDR_IO                @@ Prepare dma address base
     ldr r4, [sp, #(4+4)]            @@ Load color address
-    str r4, [r1, #DMA0_SRC]         @@ Write color address to dma source address
+    str r4, [r1, #DMA3_SRC]         @@ Write color address to dma source address
     orr r3, r3, #0x81000000         @@ Set dma control to copy colour 'width' times
 
 .L_drawRectCornerYLoop:
-    str r0, [r1, #DMA0_DST]         @@ Write pixel address to dma destination address
-    str r3, [r1, #DMA0_CNT]         @@ Set dma control to copy colour 'width' times
+    str r0, [r1, #DMA3_DST]         @@ Write pixel address to dma destination address
+    str r3, [r1, #DMA3_CNT]         @@ Set dma control to copy colour 'width' times
 
     add r0, r0, r12         	    @@ Move down vertically to next line
 	subs r2, r2, #1 			    @@ Height -= 1
@@ -320,7 +390,7 @@ m3_drawRectFromCorner:
 .size m3_drawRectFromCorner, .-m3_drawRectFromCorner
 
 
-@@ Parameters: (r0, vram addr), (r1, top left x), (r2, top left y), (r3, width), (sp #0, height), (sp #4, 16 bit color addr)
+@@ Parameters: (r0, graphics addr), (r1, top left x), (r2, top left y), (r3, width), (sp #0, height), (sp #4, 16 bit color addr)
 @@ Return: void
 .align 2
 .arm
@@ -331,19 +401,19 @@ m3_drawRectEmpty:
     mov r12, #CANVAS_WIDTH
 
     mla r1, r2, r12, r1             @@ pixel = y * CANVAS_WIDTH + x
-    add r0, r0, r1, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    add r0, r0, r1, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     ldr r2, [sp, #(0+8)]            @@ Load height
     lsl r12, r12, #BPP_POW          @@ Setup (CANVAS_WIDTH) * bytes per pixel
     mov r5, #ADDR_IO                @@ Prepare dma address base
 
     ldr r4, [sp, #(4+8)]            @@ Load color address
-    str r4, [r5, #DMA0_SRC]         @@ Write color address to dma source address
+    str r4, [r5, #DMA3_SRC]         @@ Write color address to dma source address
     ldrh r4, [r4]                   @@ Load color value
 
-    str r0, [r5, #DMA0_DST]         @@ Write pixel address to dma destination address
+    str r0, [r5, #DMA3_DST]         @@ Write pixel address to dma destination address
     orr r1, r3, #0x81000000         @@ Set dma control to copy colour 'width' times
-    str r1, [r5, #DMA0_CNT]         @@ /
+    str r1, [r5, #DMA3_CNT]         @@ /
     add r0, r3, lsl #BPP_POW        @@ Move right horizotally by width
 
     mov r1, r2
@@ -354,9 +424,9 @@ m3_drawRectEmpty:
 
     mov r1, #0x81000000             @@ Prepare dma control value
     orr r1, r1, #0x200000           @@ /
-    str r0, [r5, #DMA0_DST]         @@ Write pixel address to dma destination address
+    str r0, [r5, #DMA3_DST]         @@ Write pixel address to dma destination address
     orr r1, r3, r1                  @@ Set dma control to copy colour 'width' times
-    str r1, [r5, #DMA0_CNT]         @@ /
+    str r1, [r5, #DMA3_CNT]         @@ /
     sub r0, r3, lsl #BPP_POW        @@ Move left horizotally by width
 
     mov r1, r2
@@ -370,7 +440,7 @@ m3_drawRectEmpty:
 .size m3_drawRectEmpty, .-m3_drawRectEmpty
 
 
-@@ Parameters: (r0, vram addr), (r1, center x), (r2, center y), (r3, radius), (sp #0, 16 bit color addr)
+@@ Parameters: (r0, graphics addr), (r1, center x), (r2, center y), (r3, radius), (sp #0, 16 bit color addr)
 @@ Return: void
 .align 2
 .arm
@@ -382,7 +452,7 @@ m3_drawCircle:
     mov r12, #CANVAS_WIDTH          @@ Prepeare screen width
     mov r10, #ADDR_IO               @@ Prepare dma address base
     ldr r9, [sp, #(0+28)]           @@ Load color
-    str r9, [r10, #DMA0_SRC]        @@ Write color address to dma source address
+    str r9, [r10, #DMA3_SRC]        @@ Write color address to dma source address
 
     mov r4, #0                      @@ y = 0
     rsb r5, r3, #1                  @@ error = 1 - x
@@ -394,18 +464,18 @@ m3_drawCircle:
     orr r7, r7, #0x81000000         @@ Set dma control to copy colour 'line width' times
 
     add r8, r2, r3                  @@ line y = center y + x
-    mla r8, r8, r12, r6             @@ pixel = y * CANVAS_WIDTH + x
-    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r8, r12, r8, r6             @@ pixel = y * CANVAS_WIDTH + x
+    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
-    str r8, [r10, #DMA0_DST]        @@ Write pixel address to dma destination address
-    str r7, [r10, #DMA0_CNT]        @@ Draw line
+    str r8, [r10, #DMA3_DST]        @@ Write pixel address to dma destination address
+    str r7, [r10, #DMA3_CNT]        @@ Draw line
 
     sub r8, r2, r3                  @@ line y = center y - x
-    mla r8, r8, r12, r6             @@ pixel = y * CANVAS_WIDTH + x
-    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r8, r12, r8, r6             @@ pixel = y * CANVAS_WIDTH + x
+    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
-    str r8, [r10, #DMA0_DST]        @@ Write pixel address to dma destination address
-    str r7, [r10, #DMA0_CNT]        @@ Draw line
+    str r8, [r10, #DMA3_DST]        @@ Write pixel address to dma destination address
+    str r7, [r10, #DMA3_CNT]        @@ Draw line
 
 .L_drawCircleLoopSkip1:
     sub r6, r1, r3                  @@ line x0 = center x - x
@@ -414,18 +484,18 @@ m3_drawCircle:
     orr r7, r7, #0x81000000         @@ Set dma control to copy colour 'line width' times
 
     add r8, r2, r4                  @@ line y = center y + y
-    mla r8, r8, r12, r6             @@ pixel = y * CANVAS_WIDTH + x
-    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r8, r12, r8, r6             @@ pixel = y * CANVAS_WIDTH + x
+    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
-    str r8, [r10, #DMA0_DST]        @@ Write pixel address to dma destination address
-    str r7, [r10, #DMA0_CNT]        @@ Draw line
+    str r8, [r10, #DMA3_DST]        @@ Write pixel address to dma destination address
+    str r7, [r10, #DMA3_CNT]        @@ Draw line
 
     sub r8, r2, r4                  @@ line y = center y - y
-    mla r8, r8, r12, r6             @@ pixel = y * CANVAS_WIDTH + x
-    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r8, r12, r8, r6             @@ pixel = y * CANVAS_WIDTH + x
+    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
-    str r8, [r10, #DMA0_DST]        @@ Write pixel address to dma destination address
-    str r7, [r10, #DMA0_CNT]        @@ Draw line
+    str r8, [r10, #DMA3_DST]        @@ Write pixel address to dma destination address
+    str r7, [r10, #DMA3_CNT]        @@ Draw line
 
 .L_drawCircleLoopSkip2:
     add r4, r4, #1                  @@ y++
@@ -445,7 +515,7 @@ m3_drawCircle:
 .size m3_drawCircle, .-m3_drawCircle
 
 
-@@ Parameters: (r0, vram addr), (r1, center x), (r2, center y), (r3, radius), (sp #0, 16 bit color)
+@@ Parameters: (r0, graphics addr), (r1, center x), (r2, center y), (r3, radius), (sp #0, 16 bit color)
 @@ Return: void
 .align 2
 .arm
@@ -465,8 +535,8 @@ m3_drawCircleEmpty:
     sub r6, r1, r4                  @@ pixel x0 = center x - y
     add r8, r2, r3                  @@ pixel y = center y + x
 
-    mla r8, r8, r12, r6             @@ pixel = y * CANVAS_WIDTH + x
-    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r8, r12, r8, r6             @@ pixel = y * CANVAS_WIDTH + x
+    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     strh r9, [r8]                   @@ Draw pixel
     add r8, r4, lsl #BPP            @@ Move left horizontally by radius (y) * 2 * bytes per pixel
@@ -474,8 +544,8 @@ m3_drawCircleEmpty:
 
     sub r8, r2, r3                  @@ pixel y = center y - x
 
-    mla r8, r8, r12, r6             @@ pixel = y * CANVAS_WIDTH + x
-    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r8, r12, r8, r6             @@ pixel = y * CANVAS_WIDTH + x
+    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     strh r9, [r8]                   @@ Draw pixel
     add r8, r4, lsl #BPP            @@ Move left horizontally by radius (y) * 2 * bytes per pixel
@@ -484,8 +554,8 @@ m3_drawCircleEmpty:
     sub r6, r1, r3                  @@ pixel x0 = center x - x
     add r8, r2, r4                  @@ pixel y = center y + y
 
-    mla r8, r8, r12, r6             @@ pixel = y * CANVAS_WIDTH + x
-    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r8, r12, r8, r6             @@ pixel = y * CANVAS_WIDTH + x
+    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     strh r9, [r8]                   @@ Draw pixel
     add r8, r3, lsl #BPP            @@ Move left horizontally by radius (x) * 2 * bytes per pixel
@@ -493,8 +563,8 @@ m3_drawCircleEmpty:
 
     sub r8, r2, r4                  @@ pixel y = center y - y
 
-    mla r8, r8, r12, r6             @@ pixel = y * CANVAS_WIDTH + x
-    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = vram adress + pixel * bytes per pixel
+    mla r8, r12, r8, r6             @@ pixel = y * CANVAS_WIDTH + x
+    add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     strh r9, [r8]                   @@ Draw pixel
     add r8, r3, lsl #BPP            @@ Move left horizontally by radius (x) * 2 * bytes per pixel
@@ -517,208 +587,356 @@ m3_drawCircleEmpty:
 .size m3_drawCircleEmpty, .-m3_drawCircleEmpty
 
 
-@@ Parameters: (r0, vram addr), (r1, x1), (r2, y1), (r3, x2), (sp #0, y2), (sp #4, x3), (sp #8, y3), (sp #12, 16 bit color addr)
+@@ Parameters: (r0, graphics addr)
 @@ Return: void
+.section .iwram, "ax", %progbits
 .align 2
 .arm
-.global m3_drawTriangle
-.type m3_drawTriangle STT_FUNC
-m3_drawTriangle:
-    mov r12, lr                         @@ Save link register
-    push {r4-r12}
-    
-    add r8, sp, #36                     @@ Get stack offset adress
-    ldmia r8, {r4, r5, r6, r10}         @@ Load y2, x3, y3 and color addr from stack
+.global m3_mirrorScreenHorz
+.type m3_mirrorScreenHorz STT_FUNC
+m3_mirrorScreenHorz:  
+    mov r1, #ADDR_IO
+    mov r2, #CANVAS_HEIGHT          @@ Height
 
-    mov r8, #ADDR_IO                    @@ Dma address base
-    str r10, [r8, #DMA0_SRC]            @@ Write color address to dma source address
-    ldr r8, =LUT_DIVISION               @@ Load lut
+.L_mirrorScreenHorzLoop:
+    str r0, [r1, #DMA3_SRC]         @@ Write start of the current row to dma source address
+    add r0, #CANVAS_WIDTH * BPP     @@ Write end of the current row to dma destination address
+    sub r0, #BPP                    @@ /
+    str r0, [r1, #DMA3_DST]         @@ /
 
-                                        @@ Sort vertices by y value (top vertex in v1)
-    cmp r2, r4
-    ble .L_drawTriangleFirstLE
-    eor r1, r1, r3                      @@ Swap v1.x and v2.x
-    eor r3, r3, r1                      @@ /
-    eor r1, r1, r3                      @@ /
-    eor r2, r2, r4                      @@ Swap v1.y and v2.y
-    eor r4, r4, r2                      @@ /
-    eor r2, r2, r4                      @@ /
-.L_drawTriangleFirstLE:
-    cmp r4, r6
-    ble .L_drawTriangleSecondLE
-    eor r3, r3, r5                      @@ Swap v2.x and v3.x
-    eor r5, r5, r3                      @@ /
-    eor r3, r3, r5                      @@ /
-    eor r4, r4, r6                      @@ Swap v2.y and v3.y
-    eor r6, r6, r4                      @@ /
-    eor r4, r4, r6                      @@ /
-.L_drawTriangleSecondLE:
-    cmp r2, r4
-    ble .L_drawTriangleThirdLE
-    eor r1, r1, r3                      @@ Swap v1.x and v2.x
-    eor r3, r3, r1                      @@ /
-    eor r1, r1, r3                      @@ /
-    eor r2, r2, r4                      @@ Swap v1.y and v2.y
-    eor r4, r4, r2                      @@ /
-    eor r2, r2, r4                      @@ /
-.L_drawTriangleThirdLE:
+    mov r3, #0x80000000             @@ Set dma control to increment the source address and decrement the destination adrress
+    orr r3, r3, #0x200000           @@ /
+    orr r3, r3, #CANVAS_WIDTH / 2   @@ Set dma control to copy half the width amount of pixels
+    str r3, [r1, #DMA3_CNT]         @@ Start dma
 
-    cmp r2, r4
-    bne .L_drawTriangleBottomEnd        @@ Skip if triangle is not bottom triangle
-    sub r9, r6, r2                      @@ Delta y bottom = v3.y - v1.y
-    cmp r1, r3                          @@ if v1.x > v2.x
-    eorgt r1, r1, r3                    @@ Swap v1.x and v2.x
-    eorgt r3, r3, r1                    @@ /
-    eorgt r1, r1, r3                    @@ /
-    mov r7, r3
-    mov r3, r1
-    bl m3_drawTriangleBottom
-    b .L_drawTriangleEnd
-.L_drawTriangleBottomEnd:
+    add r0, #BPP                    @@ Increment the current row to next row
+    subs r2, #1                     @@ Height -= 1
+    bne .L_mirrorScreenHorzLoop     @@ While Height > 0, mirror the current row
 
-    sub r9, r4, r2                      @@ Delta y top = v2.y - v1.y
-    cmp r4, r6
-    bne .L_drawTriangleTopEnd           @@ Skip if triangle is not top triangle
-    cmp r3, r5                          @@ if v2.x > v3.x
-    eorgt r3, r3, r5                    @@ Swap v2.x and v3.x
-    eorgt r5, r5, r3                    @@ /
-    eorgt r3, r3, r5                    @@ /
-    mov r7, r5
-    bl m3_drawTriangleTop
-    b .L_drawTriangleEnd
-.L_drawTriangleTopEnd:
-
-                                        @@ Calculate v4.x
-    mov r12, r9, lsl #16                @@ Delta y top * added precision
-    sub r7, r6, r2                      @@ Delta y = v3.y - v1.y
-    ldr r7, [r8, r7, lsl #2]            @@ Load (1 / delta y)
-    smull r7, r12, r12, r7              @@ Dy = Delta y top / Delta y
-
-    sub r7, r5, r1                      @@ Dx = v3.x - v1.x
-    mul r12, r12, r7                    @@ Xoffset = dy * dx
-    add r7, r1, r12, asr #16            @@ v4.x = v1.x + xoffset / added precision
-    
-    cmp r3, r7                          @@ if v2.x > v4.x
-    eorgt r3, r3, r7                    @@ Swap v2.x and v4.x
-    eorgt r7, r7, r3                    @@ /
-    eorgt r3, r3, r7                    @@ /
-
-    bl m3_drawTriangleTop
-    sub r9, r6, r4                      @@ Delta y bottom = v3.y - v2.y
-    bl m3_drawTriangleBottom
-
-.L_drawTriangleEnd:
-    pop {r4-r12}
-    bx r12                              @@ Return
-.size m3_drawTriangle, .-m3_drawTriangle
+    bx lr                           @@ Return
+.size m3_mirrorScreenHorz, .-m3_mirrorScreenHorz
 
 
-@@ Parameters: (r0, vram addr), (r5, x1), (r6, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
-@@ Comments: Not callable from C/C++! Preserves {r0, r1, r2, r3, r4, r6, r8, r9, r10}. Trashes: {r5, r7, r10, r11, r12}
+@@ Parameters: (r0, graphics addr)
 @@ Return: void
+.section .iwram, "ax", %progbits
 .align 2
 .arm
-.global m3_drawTriangleBottom
-.type m3_drawTriangleBottom STT_FUNC
-m3_drawTriangleBottom:
-    sub r11, r5, r3                         @@ Delta x1 = x1 - x2
-    lsl r11, r11, #16                       @@ Add precision
-    sub r12, r5, r7                         @@ Delta x2 = x1 - x3
-    lsl r12, r12, #16                       @@ Add precision
-    
-    ldr r7, [r8, r9, lsl #2]                @@ Load (1 / delta y) from lut
-    smull r10, r11, r11, r7                 @@ Invslope1 = Delta x1 / Delta y. (r10 is trashed)
-    smull r10, r12, r12, r7                 @@ Invslope2 = Delta x2 / Delta y. (r10 is trashed)
+.global m3_mirrorScreenVert
+.type m3_mirrorScreenVert STT_FUNC
+m3_mirrorScreenVert: 
+    push {r4}
 
-    lsl r5, r5, #16                         @@ CurX1 add precision
-    mov r10, r5                             @@ CurX2
+    mov r1, #ADDR_IO
+    add r2, r0, #PIXEL_COUNT * BPP  @@ Calculate the start address of the last row
+    sub r2, r2, #CANVAS_WIDTH * BPP @@ /
+    mov r4, #CANVAS_HEIGHT / 2      @@ Height = half screen height
 
-    mov r7, #ADDR_IO                        @@ Prepare dma address base
-    add r9, r4, r9                          @@ CurY = y2/y3 - delta y 
-    mov r3, #CANVAS_WIDTH                   @@ Prepare screen width
-    mul r9, r9, r3                          @@ Prepare curY pixel address
-    add r9, r0, r9, lsl #BPP_POW            @@ /
-    mul r4, r4, r3                          @@ Prepare y2 pixel address
-    add r4, r0, r4, lsl #BPP_POW            @@ /
-    lsl r3, r3, #BPP_POW                    @@ Prepare screen width * bytes per pixel
-    
-.L_drawTriangleBottomLoop:
-    asr r1, r5, #16                         @@ TempCurX1 = CurX1 remove precision
-    asr r2, r10, #16                        @@ tempCurX2 = CurX2 remove precision
-    sub r2, r2, r1                          @@ CurDeltaX = TempCurX2 - TempCurX1
-    add r2, r2, #1                          @@ Add bias to right side
+.L_mirrorScreenVertLoop:
+    str r0, [r1, #DMA3_SRC]         @@ Write start of the current row to dma source address
+    add r0, #CANVAS_WIDTH * BPP     @@ Current row += 1
+    str r2, [r1, #DMA3_DST]         @@ Write start of the last row to dma destination address
+    sub r2, #CANVAS_WIDTH * BPP     @@ Last row -= 1
 
-    add r1, r9, r1, lsl #BPP_POW            @@ pixel address = CurY pixel address + TempCurX1 * bytes per pixel
-    str r1, [r7, #DMA0_DST]                 @@ Write pixel address to dma destination address
-    orr r2, r2, #0x81000000                 @@ Set dma control to copy colour 'curDeltaX' times
-    str r2, [r7, #DMA0_CNT]                 @@ /
+    mov r3, #0x84000000             @@ Set dma control to increment the source and destination adrress
+    orr r3, r3, #CANVAS_WIDTH / 2   @@ Set dma control to copy the width amount of pixels
+    str r3, [r1, #DMA3_CNT]         @@ Start dma
 
-.L_drawTriangleBottomSkip:
-    sub r5, r5, r11                         @@ curX1 -= invSlope1
-    sub r10, r10, r12                       @@ curX2 -= invSlope2
-    sub r9, r9, r3                          @@ CurY pixel address -= screen width * bytes per pixel
-    cmp r9, r4
-    bge .L_drawTriangleBottomLoop           @@ Loop while (curY >= y2/y3)
-.L_drawTriangleBottomLoopEnd:
-    bx lr                                   @@ Return
-.size m3_drawTriangleBottom, .-m3_drawTriangleBottom
+    subs r4, #1                     @@ Height -= 1
+    bne .L_mirrorScreenVertLoop     @@ While Height > 0, mirror the current row
+
+    pop {r4}
+    bx lr                           @@ Return
+.size m3_mirrorScreenVert, .-m3_mirrorScreenVert
 
 
-@@ Parameters: (r0, vram addr), (r1, x1), (r2, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
-@@ Comments: Not callable from C/C++! Preserves {r0, r3, r4, r5, r6, r7, r8}. Trashes: {r1, r2, r9, r10, r11, r12}
+@@ Parameters: (r0, graphics addr)
 @@ Return: void
+.section .iwram, "ax", %progbits
 .align 2
 .arm
-.global m3_drawTriangleTop
-.type m3_drawTriangleTop STT_FUNC
-m3_drawTriangleTop:
-    push {r4-r7}
+.global m3_mirrorScreenDiag
+.type m3_mirrorScreenDiag STT_FUNC
+m3_mirrorScreenDiag: 
+    mov r1, #ADDR_IO
 
-    sub r11, r3, r1                         @@ Delta x1 = x2 - x1
-    lsl r11, r11, #16                       @@ Add precision
-    sub r12, r7, r1                         @@ Delta x2 = x3 - x1
-    lsl r12, r12, #16                       @@ Add precision
+    str r0, [r1, #DMA3_SRC]         @@ Write the top left corner to dma source address
+    add r0, r0, #PIXEL_COUNT * BPP  @@ Write the bottom right corner to dma destination address
+    str r0, [r1, #DMA3_DST]         @@ /
 
-    ldr r7, [r8, r9, lsl #2]                @@ Load (1 / delta y) from lut
-    smull r10, r11, r11, r7                 @@ Invslope1 = Delta x1 / Delta y. (r10 is trashed)
-    smull r10, r12, r12, r7                 @@ Invslope2 = Delta x2 / Delta y. (r10 is trashed)
+    mov r2, #0x80000000             @@ Set dma control to increment the source address and decrement the destination adrress
+    orr r2, r2, #0x200000           @@ /
+    orr r2, r2, #PIXEL_COUNT / 2    @@ Set dma control to copy half the amount of pixels
+    str r2, [r1, #DMA3_CNT]         @@ Start dma
 
-    lsl r1, r1, #16                         @@ CurX1 add precision
-    mov r10, r1                             @@ CurX2 = curX1
-
-    mov r7, #ADDR_IO                        @@ Prepare dma address base
-    sub r9, r4, r9                          @@ CurY = y2 - delta y 
-    mov r2, #CANVAS_WIDTH                   @@ Prepare screen width
-    mul r9, r9, r2                          @@ Prepare curY pixel address
-    add r9, r0, r9, lsl #BPP_POW            @@ /
-    mul r4, r4, r2                          @@ Prepare y2 pixel address
-    add r4, r0, r4, lsl #BPP_POW            @@ /
-    lsl r2, r2, #BPP_POW                    @@ Prepare screen width * bytes per pixel
-
-.L_drawTriangleTopLoop:
-    asr r5, r1, #16                         @@ TempCurX1 = CurX1 remove precision
-    asr r6, r10, #16                        @@ tempCurX2 = CurX2 remove precision
-    sub r6, r6, r5                          @@ CurDeltaX = TempCurX2 - TempCurX1
-    add r6, r6, #1                          @@ Add bias to right side
-
-    add r5, r9, r5, lsl #BPP_POW            @@ pixel address = CurY pixel address + TempCurX1 * bytes per pixel
-    str r5, [r7, #DMA0_DST]                 @@ Write pixel address to dma destination address
-    orr r6, r6, #0x81000000                 @@ Set dma control to copy colour 'curDeltaX' times
-    str r6, [r7, #DMA0_CNT]                 @@ /
-
-.L_drawTriangleTopSkip:
-    add r1, r1, r11                         @@ CurX1 += invSlope1
-    add r10, r10, r12                       @@ CurX2 += invSlope2
-    add r9, r9, r2                          @@ CurY pixel address += screen width * bytes per pixel
-    cmp r4, r9
-    bge .L_drawTriangleTopLoop              @@ Loop while (y2/y3 >= curY)
-.L_drawTriangleTopLoopEnd:
-    pop {r4-r7}                             @@ Return
-    bx lr                                   @@ /
-.size m3_drawTriangleTop, .-m3_drawTriangleTop
+    bx lr                           @@ Return
+.size m3_mirrorScreenDiag, .-m3_mirrorScreenDiag
 
 
-@@ Parameters: (r0, vram addr), (r1, x1), (r2, y1), (r3, x2), (sp #0, y2), (sp #4, x3), (sp #8, y3), (sp #12, 16 bit color addr)
+@@ Parameters: (r0, graphics addr), (r1, model addr), (r2, triangle count), (r3, xPos), (sp #0, yPos), (sp #4, zpos)
+@@ Return: void
+.section .iwram, "ax", %progbits
+.align 2
+.arm
+.global m3_draw3DModel
+.type m3_draw3DModel STT_FUNC
+m3_draw3DModel: 
+    push {r4-r11, lr}
+    mov r4, r1
+    ldr r1, =.L_draw3DModelLoopContinue @@ Setup continue addr
+    add r2, r2, r2, lsl #2              @@ temp = triangle count * 5
+    add r2, r4, r2, lsl #2              @@ model end addr = model addr + temp * 4
+    push {r1-r4}                        @@ Save: loop continue addr (r1), end triangle addr (r2), xPos (r3), current triangle addr (r4)
+    ldr r12, =LUT_DIVISION              @@ Load lut
+
+.L_draw3DModelLoop:
+    ldr r11, [sp, #24]                  @@ Load zPos
+    ldrsh r3, [r4, #4]                  @@ Load vertx1.z
+    add r3, r3, r11                     @@ zPos + vertx1.z
+    cmp r3, #NEAR_PLANE                 @@ If vertx1.z < NEAR_PLANE:
+    blt .L_draw3DModelLoopEnd           @@ Skip to next triangle
+
+    add r10, r4, #18                    @@ Load colour
+    ldrsh r9, [r4, #16]                 @@ Load vertx3.z
+    ldrsh r6, [r4, #10]                 @@ Load vertx2.z
+
+#if GRAPHICS_MODE == 3 || PREPROCESSED == 1
+    ldrsh r2, [r4, #2]                  @@ Load vertx1.y
+    ldrsh r8, [r4, #14]                 @@ Load vertx3.y
+    ldrsh r5, [r4, #8]                  @@ Load vertx2.y
+    ldrsh r1, [r4, #0]                  @@ Load vertx1.x
+    ldrsh r7, [r4, #12]                 @@ Load vertx3.x
+    ldrsh r4, [r4, #6]                  @@ Load vertx2.x
+#else
+    ldrsh r2, [r4, #0]                  @@ Load vertx1.x
+    ldrsh r8, [r4, #12]                 @@ Load vertx3.x
+    ldrsh r5, [r4, #6]                  @@ Load vertx2.x
+    ldrsh r1, [r4, #2]                  @@ Load vertx1.y
+    ldrsh r7, [r4, #14]                 @@ Load vertx3.y
+    ldrsh r4, [r4, #8]                  @@ Load vertx2.y
+#endif
+
+    add r9, r9, r11                     @@ zPos + vertx3.z
+    add r6, r6, r11                     @@ zPos + vertx2.z
+
+    ldr r11, [sp, #20]                  @@ Load yPos
+    ldr lr, [sp, #16]                   @@ Load xPos
+#if GRAPHICS_MODE == 3 || PREPROCESSED == 1
+    add r2, r2, r11                     @@ ypos + vertex1.y
+    add r5, r5, r11                     @@ ypos + vertex3.y
+    add r8, r8, r11                     @@ ypos + vertex2.y
+    add r1, r1, lr                      @@ xpos + vertex1.x
+    add r7, r7, lr                      @@ xpos + vertex3.x
+    add r4, r4, lr                      @@ xpos + vertex2.x
+#else
+    add r2, r2, lr                      @@ xpos + vertex1.y
+    add r5, r5, lr                      @@ xpos + vertex3.y
+    add r8, r8, lr                      @@ xpos + vertex2.y
+    add r1, r1, r11                     @@ ypos + vertex1.x
+    add r7, r7, r11                     @@ ypos + vertex3.x
+    add r4, r4, r11                     @@ ypos + vertex2.x
+    asr r2, r2, #1
+    asr r5, r5, #1
+    asr r8, r8, #1
+#endif
+
+    b .G_drawTriangle3DAsm              @@ Draw triangle
+.L_draw3DModelLoopContinue:
+    ldr r4, [sp, #12]                   @@ Load current triangle addr
+    ldr r2, [sp, #4]                    @@ Load end triangle addr
+    mov r12, r8                         @@ Load lut
+
+.L_draw3DModelLoopEnd:
+    add r4, r4, #20                     @@ Increment triangle memory addr to next triangle
+    str r4, [sp, #12]                   @@ /
+    cmp r4, r2                          @@ While triangle count > 0, draw next triangle
+    blt .L_draw3DModelLoop              @@ /
+
+    pop {r0-r12}                    @@ Return
+    bx r12                              @@ /
+.size m3_draw3DModel, .-m3_draw3DModel
+
+
+@@ Parameters: (r0, graphics addr), (r1, x1),       (r2, y1),       (r3, z1), 
+@@                                  (sp #0, x2),    (sp #4, y2),    (sp #8, z2), 
+@@                                  (sp #12, x3),   (sp #16, y3),   (sp #20, z3), 
+@@             (sp #24, 16 bit color addr)
+@@ Return: void
+.section .iwram, "ax", %progbits
+.align 2
+.arm
+.global m3_drawTriangle3D
+.type m3_drawTriangle3D STT_FUNC
+m3_drawTriangle3D:
+    cmp r3, #NEAR_PLANE                 @@ If z1 < NEAR_PLANE:
+    bxlt lr                             @@ Return
+
+	push {r4-r11, lr}                   @@ Save registers
+    ldr r12, =.G_drawTriangle3dEnd      @@ For if the function is called using .G_drawTriangle3DAsm
+    push {r12}                          @@ /
+    
+	ldr r12, =LUT_DIVISION              @@ Load lut
+	add r10, sp, #40                    @@ Get offset into the stack
+	ldmia r10, {r4-r9, r10}             @@ Load Vertex2, Vertex3 and colour
+.G_drawTriangle3DAsm:
+    mov r11, #ADDR_IO                   @@ Dma address base
+    str r10, [r11, #DMA3_SRC]           @@ Write color address to dma source address
+
+    cmp r9, #NEAR_PLANE                 @@ If z3 < NEAR_PLANE:
+    bge .L_drawTriangle3DProject        @@ No clipping needed
+    
+    cmp r6, #NEAR_PLANE                 @@ If z2 < NEAR_PLANE:
+    bge .L_drawTriangle3D2Vert          @@ /
+
+                                        @@ Clip 2 vertices, one resulting triangle drawn
+    sub r11, r3, #NEAR_PLANE            @@ LerpTemp = z1 - NEAR_PLANE
+    lsl r11, r11, #16                   @@ Add precision
+
+    sub r10, r3, r9                     @@ LerpTemp2 = z1 - z3
+    ldr r10, [r12, r10, lsl #2]         @@ Load 1 / LerpTemp2
+    smull lr, r10, r11, r10             @@ LerpMul2 = LerpTemp / LerpTemp2, lr is trashed
+
+    sub r7, r7, r1                      @@ (((x3 - x1)))
+    mul r7, r10, r7                     @@ (((x3 - x1) * LerpMul2))
+    add r7, r1, r7, asr #16             @@ (((x3 - x1) * LerpMul2) >> 16) + x1
+
+    sub r8, r8, r2                      @@ (((y3 - y1)))
+    mul r8, r10, r8                     @@ (((y3 - y1) * LerpMul2))
+    add r8, r2, r8, asr #16             @@ (((y3 - y1) * LerpMul2) >> 16) + y1
+
+    sub r9, r9, r3                      @@ (((z3 - z1)))
+    mul r9, r10, r9                     @@ (((z3 - z1) * LerpMul2))
+    add r9, r3, r9, asr #16             @@ (((z3 - z1) * LerpMul2) >> 16) + z1
+
+    sub r10, r3, r6                     @@ LerpTemp1 = z1 - z2
+    ldr r10, [r12, r10, lsl #2]         @@ Load 1 / LerpTemp1
+    smull lr, r10, r11, r10             @@ LerpMul1 = LerpTemp / LerpTemp1, lr is trashed
+
+    sub r4, r4, r1                      @@ (((x2 - x1)))
+    mul r4, r10, r4                     @@ (((x2 - x1) * LerpMul1))
+    add r4, r1, r4, asr #16             @@ (((x2 - x1) * LerpMul1) >> 16) + x1
+
+    sub r5, r5, r2                      @@ (((y2 - y1)))
+    mul r5, r10, r5                     @@ (((y2 - y1) * LerpMul1))
+    add r5, r2, r5, asr #16             @@ (((y2 - y1) * LerpMul1) >> 16) + y1
+
+    sub r6, r6, r3                      @@ (((z2 - z1)))
+    mul r6, r10, r6                     @@ (((z2 - z1) * LerpMul1))
+    add r6, r3, r6, asr #16             @@ (((z2 - z1) * LerpMul1) >> 16) + z1
+    
+    b .L_drawTriangle3DProject          @@ Draw triangle
+
+.L_drawTriangle3D2Vert:
+    push {r4-r6}                        @@ Save vertex 2
+    
+    sub r11, r6, #NEAR_PLANE            @@ LerpTemp3 = z2 - NEAR_PLANE
+    lsl r11, r11, #16                   @@ Add precision
+
+    sub r10, r6, r9                     @@ LerpTemp4 = z2 - z3
+    ldr r10, [r12, r10, lsl #2]         @@ Load 1 / LerpTemp4
+    smull lr, r10, r11, r10             @@ LerpMul3 = LerpTemp3 / LerpTemp4, lr is trashed
+
+    sub r11, r7, r4                     @@ (((x3 - x2)))
+    mul r11, r10, r11                   @@ (((x3 - x2) * LerpMul3))
+    add r4, r4, r11, asr #16            @@ (((x3 - x2) * LerpMul3) >> 16) + x2
+
+    sub r11, r8, r5                     @@ (((y3 - y2)))
+    mul r11, r10, r11                   @@ (((y3 - y2) * LerpMul3))
+    add r5, r5, r11, asr #16            @@ (((y3 - y2) * LerpMul3) >> 16) + y2
+
+    sub r11, r9, r6                     @@ (((z3 - z2)))
+    mul r11, r10, r11                   @@ (((z3 - z2) * LerpMul3))
+    add r6, r6, r11, asr #16            @@ (((z3 - z2) * LerpMul3) >> 16) + z2
+    
+    sub r11, r3, #NEAR_PLANE            @@ LerpTemp = z1 - NEAR_PLANE
+    lsl r11, r11, #16                   @@ Add precision
+
+    sub r10, r3, r9                     @@ LerpTemp2 = z1 - z3
+    ldr r10, [r12, r10, lsl #2]         @@ Load 1 / LerpTemp2
+    smull lr, r10, r11, r10             @@ LerpMul2 = LerpTemp / LerpTemp2, lr is trashed
+
+    sub r7, r7, r1                      @@ (((x3 - x1)))
+    mul r7, r10, r7                     @@ (((x3 - x1) * LerpMul2))
+    add r7, r1, r7, asr #16             @@ (((x3 - x1) * LerpMul2) >> 16) + x1
+
+    sub r8, r8, r2                      @@ (((y3 - y1)))
+    mul r8, r10, r8                     @@ (((y3 - y1) * LerpMul2))
+    add r8, r2, r8, asr #16             @@ (((y3 - y1) * LerpMul2) >> 16) + y1
+
+    sub r9, r9, r3                      @@ (((z3 - z1)))
+    mul r9, r10, r9                     @@ (((z3 - z1) * LerpMul2))
+    add r9, r3, r9, asr #16             @@ (((z3 - z1) * LerpMul2) >> 16) + z1
+    
+    push {r1-r3, r7-r9}                 @@ Save vertices 1 and 3
+    ldr lr, =.L_drawTriangle3DSecondTri @@ Set return address to second trinagle draw
+    push {lr}
+    add r10, r13, #28                   @@ Offset stack pointer
+    ldmfd r10, {r1-r3}                  @@ Load vertex 2
+    b .L_drawTriangle3DProject          @@ Draw triangle
+.L_drawTriangle3DSecondTri:
+    mov r12, r8                         @@ Load lut
+    mov r11, r0                         @@ Save graphics addr
+    pop {r0-r9}                         @@ Load vertices 1, 2 and 3
+    mov r0, r11                         @@ Restore graphics addr
+    b .L_drawTriangle3DProject          @@ Draw triangle   
+
+.L_drawTriangle3DProject:
+
+                                        @@ Vertex1 to screen pos
+    lsl r1, r1, #FOV_POW                @@ x1 * fov
+    lsl r2, r2, #FOV_POW                @@ y1 * fov
+	ldr r3, [r12, r3, lsl #2]           @@ Load 1 / z1
+	smull r11, r1, r3, r1               @@ (x1 * fov) / z1, r11 is trashed
+	smull r11, r2, r3, r2               @@ (y1 * fov) / z1, r11 is trashed
+	add r1, r1, #CANVAS_WIDTH/2         @@ sX1 = (x1 * fov) / z1 + centerScreenX
+	add r2, r2, #CANVAS_HEIGHT/2        @@ sY1 = (y1 * fov) / z1 + centerScreenY
+		
+                                        @@ Vertex2 to screen pos
+    lsl r4, r4, #FOV_POW                @@ x2 * fov
+    lsl r5, r5, #FOV_POW                @@ y2 * fov
+	ldr r6, [r12, r6, lsl #2]           @@ Load 1 / z2
+	smull r11, r4, r6, r4               @@ (x2 * fov) / z2, r11 is trashed
+	smull r11, r5, r6, r5               @@ (y2 * fov) / z2, r11 is trashed
+	add r3, r4, #CANVAS_WIDTH/2         @@ sX2 = (x2 * fov) / z2 + centerScreenX
+	add r4, r5, #CANVAS_HEIGHT/2        @@ sY2 = (y2 * fov) / z2 + centerScreenY
+
+                                        @@ Vertex3 to screen pos
+    lsl r7, r7, #FOV_POW                @@ x3 * fov
+    lsl r8, r8, #FOV_POW                @@ y3 * fov
+	ldr r9, [r12, r9, lsl #2]           @@ Load 1 / z3
+	smull r11, r5, r9, r7               @@ (x3 * fov) / z3, r11 is trashed
+	smull r11, r6, r9, r8               @@ (y3 * fov) / z3, r11 is trashed
+	add r5, r5, #CANVAS_WIDTH/2         @@ sX3 = (x3 * fov) / z3 + centerScreenX
+	add r6, r6, #CANVAS_HEIGHT/2        @@ sY3 = (y3 * fov) / z3 + centerScreenY
+
+    mov r8, r12                         @@ Load lut
+
+#if BACKFACE_CULLING == 1
+    @@ Backface culling is not always faster!
+    @@TODO: Does not work properly with 3d clipping. Vertex order is not the same after clipping. To fix this, sorting needs to be applied.
+    sub r7, r3, r1                      @@ Get triangle side vectors
+    sub r10, r4, r2                     @@ /
+    sub r9, r5, r1                      @@ /
+    sub r11, r6, r2                     @@ /
+
+    mul r7, r11, r7                     @@ Calculate cross product
+    mul r10, r9, r10                    @@ /
+    subs r7, r7, r10                    @@ / 
+
+    bmi .G_drawTriangleClippedAsm       @@ Draw 2d triangle, if facing camera
+
+    ldr r12, [sp]                       @@ First return
+    bx r12                              @@ /
+#else
+	b .G_drawTriangleClippedAsm         @@ Draw 2d triangle
+#endif
+.G_drawTriangle3dEnd:
+    pop {r3-r12}                        @@ Final return
+    bx r12                              @@ /
+.size m3_drawTriangle3D, .-m3_drawTriangle3D
+
+
+@@ Parameters: (r0, graphics addr), (r1, x1), (r2, y1), (r3, x2), (sp #0, y2), (sp #4, x3), (sp #8, y3), (sp #12, 16 bit color addr)
 @@ Return: void
 .section .iwram, "ax", %progbits
 .align 2
@@ -726,16 +944,17 @@ m3_drawTriangleTop:
 .global m3_drawTriangleClipped
 .type m3_drawTriangleClipped STT_FUNC
 m3_drawTriangleClipped:
-    mov r12, lr                         @@ Save link register
-    push {r4-r12}
+    push {r4-r11, lr}                   @@ Save registers
+    ldr r12, =.G_drawTriangle3dEnd      @@ For if the function is called using .G_drawTriangle3DAsm
+    push {r12}                          @@ /
     
-    add r8, sp, #36                     @@ Get stack offset adress
+    add r8, sp, #40                     @@ Get stack offset address
     ldmia r8, {r4, r5, r6, r10}         @@ Load y2, x3, y3 and color addr from stack
 
-.G_drawTriangleClippedAsm:
     mov r8, #ADDR_IO                    @@ Dma address base
-    str r10, [r8, #DMA0_SRC]            @@ Write color address to dma source address
+    str r10, [r8, #DMA3_SRC]            @@ Write color address to dma source address
     ldr r8, =LUT_DIVISION               @@ Load lut
+.G_drawTriangleClippedAsm:
 
                                         @@ Sort vertices by y value (top vertex in v1)
     cmp r2, r4
@@ -775,8 +994,9 @@ m3_drawTriangleClipped:
     eorgt r1, r1, r3                    @@ /
     mov r7, r3
     mov r3, r1
-    bl m3_drawTriangleClippedBottom
-    b .L_drawTriangleClippedEnd
+
+    ldr lr, =.L_drawTriangleClippedEnd  @@ Set return address to end
+    b m3_drawTriangleClippedBottom 
 .L_drawTriangleClippedBottomEnd:
 
     sub r9, r4, r2                      @@ Delta y top = v2.y - v1.y
@@ -787,18 +1007,18 @@ m3_drawTriangleClipped:
     eorgt r5, r5, r3                    @@ /
     eorgt r3, r3, r5                    @@ /
     mov r7, r5
-    bl m3_drawTriangleClippedTop
-    b .L_drawTriangleClippedEnd
+    ldr lr, =.L_drawTriangleClippedEnd  @@ Set return address to end
+    b m3_drawTriangleClippedTop
 .L_drawTriangleClippedTopEnd:
 
                                         @@ Calculate v4.x
     mov r12, r9, lsl #16                @@ Delta y top * added precision
     sub r7, r6, r2                      @@ Delta y = v3.y - v1.y
     ldr r7, [r8, r7, lsl #2]            @@ Load (1 / delta y)
-    smull r7, r12, r12, r7              @@ Dy = Delta y top / Delta y
+    smull lr, r12, r7, r12              @@ Dy = Delta y top / Delta y
 
     sub r7, r5, r1                      @@ Dx = v3.x - v1.x
-    mul r12, r12, r7                    @@ Xoffset = dy * dx
+    mul r12, r7, r12                    @@ Xoffset = dy * dx
     add r7, r1, r12, asr #16            @@ v4.x = v1.x + xoffset / added precision
     
     cmp r3, r7                          @@ if v2.x > v4.x
@@ -811,31 +1031,35 @@ m3_drawTriangleClipped:
     bl m3_drawTriangleClippedBottom
 
 .L_drawTriangleClippedEnd:
-    pop {r4-r12}
-    bx r12                              @@ Return
+    ldr r12, [sp]                       @@ First return
+    bx r12                              @@ /
 .size m3_drawTriangleClipped, .-m3_drawTriangleClipped
 
 
-@@ Parameters: (r0, vram addr), (r5, x1), (r6, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
-@@ Comments: Not callable from C/C++! Preserves {r0, r1, r2, r3, r4, r6, r8, r9, r10}. Trashes: {r5, r7, r10, r11, r12}
+@@ Parameters: (r0, graphics addr), (r5, x1), (r6, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
+@@ Comments: Not callable from C/C++! Preserves {r0, r1, r2, r3, r4, r6, r8, r9}. Trashes: {r5, r7, r10, r11, r12}
 @@ Return: void
 .section .iwram, "ax", %progbits
 .align 2
 .arm
 .global m3_drawTriangleClippedBottom
 .type m3_drawTriangleClippedBottom STT_FUNC
-m3_drawTriangleClippedBottom:
+m3_drawTriangleClippedBottom:    
     sub r11, r5, r3                         @@ Delta x1 = x1 - x2
     lsl r11, r11, #16                       @@ Add precision
     sub r12, r5, r7                         @@ Delta x2 = x1 - x3
     lsl r12, r12, #16                       @@ Add precision
     
     ldr r7, [r8, r9, lsl #2]                @@ Load (1 / delta y) from lut
-    smull r10, r11, r11, r7                 @@ Invslope1 = Delta x1 / Delta y. (r10 is trashed)
-    smull r10, r12, r12, r7                 @@ Invslope2 = Delta x2 / Delta y. (r10 is trashed)
+    smull r10, r11, r7, r11                 @@ Invslope1 = Delta x1 / Delta y. (r10 is trashed)
+    smull r10, r12, r7, r12                 @@ Invslope2 = Delta x2 / Delta y. (r10 is trashed)
 
     lsl r5, r5, #16                         @@ CurX1 add precision
     mov r10, r5                             @@ CurX2
+
+    cmp r4, #CANVAS_HEIGHT-1                @@ if y2/y3 >= 0 && y2/y3 < height &&
+    cmpls r6, #CANVAS_HEIGHT-1              @@ if y1 >= 0 && y1 < height
+    bls .L_drawTriangleClippedBottomSkipYClip @@ Trinagle doesn't need y-clipping, skip.
 
                                             @@ Y clipping
     rsbs r7, r6, #CANVAS_HEIGHT-1           @@ TempInvY = maxY - y1. If (tempInvY < 0) clip y max
@@ -848,8 +1072,9 @@ m3_drawTriangleClippedBottom:
     movmi r4, #0                            @@ Y2 = 0
 
     cmp r9, #0                              @@ If (delta y < 0) skip.
-    bmi .L_drawTriangleClippedBottomLoopEnd @@ /
+    bxmi lr                                 @@ Return
 
+.L_drawTriangleClippedBottomSkipYClip:
     mov r3, #CANVAS_WIDTH                   @@ Prepare screen width
     mov r7, #ADDR_IO                        @@ Prepare dma address base
     add r9, r4, r9                          @@ CurY = y2/y3 - delta y 
@@ -867,7 +1092,13 @@ m3_drawTriangleClippedBottom:
     add r9, r0, r9, lsl #BPP_POW            @@ Prepare curY pixel address: curY * bytes per pixel
     add r4, r0, r4, lsl #BPP_POW            @@ Prepare y2 pixel address: y2 * bytes per pixel
 
-.L_drawTriangleClippedBottomLoop:
+    cmp r5, #CANVAS_WIDTH-1                 @@ if x1 >= 0 && x1 < width &&
+    cmpls r3, #CANVAS_WIDTH-1               @@ if x2 >= 0 && x2 < width &&
+    cmpls r7, #CANVAS_WIDTH-1               @@ if x3 >= 0 && x3 < width 
+    bls .L_drawTriangleBottomLoop           @@ Triangle doesn't need x-clipping, draw without.
+
+.L_drawTriangleClippedBottomLoop:           @@ Draw loop with x-clipping
+.irp index, TRI_LOOP_UNROLL
                                             @@ X clipping
     asrs r1, r5, #16                        @@ TempCurX1 = CurX1 remove precision
     movmi r1, #0                            @@ If (tempCurX1 < 0) tempCurX1 = 0
@@ -877,26 +1108,49 @@ m3_drawTriangleClippedBottom:
     movge r2, #CANVAS_WIDTH-1               @@ TempCurX2 = maxX
 
     subs r2, r2, r1                         @@ CurDeltaX = TempCurX2 - TempCurX1
-    bmi .L_drawTriangleClippedBottomSkip    @@ If (CurDeltaX < 0) skip
+    bmi .L_drawTriangleClippedBottomSkip\index @@ If (CurDeltaX < 0) skip
     add r2, r2, #1                          @@ Add bias to right side
 
     add r1, r9, r1, lsl #BPP_POW            @@ pixel address = CurY pixel address + TempCurX1 * bytes per pixel
-    str r1, [r7, #DMA0_DST]                 @@ Write pixel address to dma destination address
+    str r1, [r7, #DMA3_DST]                 @@ Write pixel address to dma destination address
     orr r2, r2, #0x81000000                 @@ Set dma control to copy colour 'curDeltaX' times
-    str r2, [r7, #DMA0_CNT]                 @@ /
+    str r2, [r7, #DMA3_CNT]                 @@ /
 
-.L_drawTriangleClippedBottomSkip:
+.L_drawTriangleClippedBottomSkip\index:
     sub r5, r5, r11                         @@ curX1 -= invSlope1
     sub r10, r10, r12                       @@ curX2 -= invSlope2
     sub r9, r9, r3, lsl #BPP_POW            @@ CurY pixel address -= screen width * bytes per pixel
     cmp r9, r4
-    bge .L_drawTriangleClippedBottomLoop    @@ Loop while (curY >= y2/y3)
-.L_drawTriangleClippedBottomLoopEnd:
-    bx lr                                   @@ Return
+    bxlt lr                                 @@ Return if (curY < y2/y3)
+.endr
+    b .L_drawTriangleClippedBottomLoop      @@ Loop while (curY >= y2/y3)
+
+.L_drawTriangleBottomLoop:                  @@ Draw loop without x-clipping
+.irp index, TRI_LOOP_UNROLL
+    asr r1, r5, #16                         @@ TempCurX1 = CurX1 remove precision
+    asr r2, r10, #16                        @@ tempCurX2 = CurX2 remove precision
+
+    subs r2, r2, r1                         @@ CurDeltaX = TempCurX2 - TempCurX1
+    bmi .L_drawTriangleBottomSkip\index     @@ If (CurDeltaX < 0) skip
+    add r2, r2, #1                          @@ Add bias to right side
+
+    add r1, r9, r1, lsl #BPP_POW            @@ pixel address = CurY pixel address + TempCurX1 * bytes per pixel
+    str r1, [r7, #DMA3_DST]                 @@ Write pixel address to dma destination address
+    orr r2, r2, #0x81000000                 @@ Set dma control to copy colour 'curDeltaX' times
+    str r2, [r7, #DMA3_CNT]                 @@ /
+
+.L_drawTriangleBottomSkip\index:
+    sub r5, r5, r11                         @@ curX1 -= invSlope1
+    sub r10, r10, r12                       @@ curX2 -= invSlope2
+    sub r9, r9, r3, lsl #BPP_POW            @@ CurY pixel address -= screen width * bytes per pixel
+    cmp r9, r4
+    bxlt lr                                 @@ Return if (curY < y2/y3)
+.endr
+    b .L_drawTriangleBottomLoop             @@ Loop while (curY >= y2/y3)
 .size m3_drawTriangleClippedBottom, .-m3_drawTriangleClippedBottom
 
 
-@@ Parameters: (r0, vram addr), (r1, x1), (r2, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
+@@ Parameters: (r0, graphics addr), (r1, x1), (r2, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
 @@ Comments: Not callable from C/C++! Preserves {r0, r3, r4, r5, r6, r7, r8}. Trashes: {r1, r2, r9, r10, r11, r12}
 @@ Return: void
 .section .iwram, "ax", %progbits
@@ -904,7 +1158,7 @@ m3_drawTriangleClippedBottom:
 .arm
 .global m3_drawTriangleClippedTop
 .type m3_drawTriangleClippedTop STT_FUNC
-m3_drawTriangleClippedTop:
+m3_drawTriangleClippedTop:    
     push {r4-r7}
 
     sub r11, r3, r1                         @@ Delta x1 = x2 - x1
@@ -913,11 +1167,15 @@ m3_drawTriangleClippedTop:
     lsl r12, r12, #16                       @@ Add precision
 
     ldr r7, [r8, r9, lsl #2]                @@ Load (1 / delta y) from lut
-    smull r10, r11, r11, r7                 @@ Invslope1 = Delta x1 / Delta y. (r10 is trashed)
-    smull r10, r12, r12, r7                 @@ Invslope2 = Delta x2 / Delta y. (r10 is trashed)
+    smull r10, r11, r7, r11                 @@ Invslope1 = Delta x1 / Delta y. (r10 is trashed)
+    smull r10, r12, r7, r12                 @@ Invslope2 = Delta x2 / Delta y. (r10 is trashed)
 
     lsl r1, r1, #16                         @@ CurX1 add precision
     mov r10, r1                             @@ CurX2 = curX1
+
+    cmp r2, #CANVAS_HEIGHT-1                @@ if y1 >= 0 && y1 < height &&
+    cmpls r4, #CANVAS_HEIGHT-1              @@ if y2/y3 >= 0 && y2/y3 < height
+    bls .L_drawTriangleClippedTopSkipYClip  @@ Triangle doesn't need y-clipping, skip.
 
                                             @@ Y clipping
     rsbs r7, r2, #0                         @@ InvY1 = 0 - y1. If (InvY1 > 0) clip y min.
@@ -932,6 +1190,7 @@ m3_drawTriangleClippedTop:
     cmp r9, #0                              @@ If (delta y < 0) skip.
     bmi .L_drawTriangleClippedTopLoopEnd    @@ /
 
+.L_drawTriangleClippedTopSkipYClip:
     mov r2, #CANVAS_WIDTH                   @@ Prepare screen width
     mov r7, #ADDR_IO                        @@ Prepare dma address base
     sub r9, r4, r9                          @@ CurY = y2 - delta y 
@@ -949,7 +1208,13 @@ m3_drawTriangleClippedTop:
     add r9, r0, r9, lsl #BPP_POW            @@ Prepare curY pixel address: curY * bytes per pixel
     add r4, r0, r4, lsl #BPP_POW            @@ Prepare y2 pixel address: y2 * bytes per pixel
 
-.L_drawTriangleClippedTopLoop:
+    cmp r1, #CANVAS_WIDTH-1                 @@ if x1 >= 0 && x1 < width &&
+    cmpls r3, #CANVAS_WIDTH-1               @@ if x2 >= 0 && x2 < width &&
+    cmpls r7, #CANVAS_WIDTH-1               @@ if x3 >= 0 && x3 < width
+    bls .L_drawTriangleTopLoop              @@ Triangle doesn't need x-clipping, draw without.
+
+.L_drawTriangleClippedTopLoop:              @@ Draw loop with x-clipping
+.irp index, TRI_LOOP_UNROLL
                                             @@ X clipping
     asrs r5, r1, #16                        @@ TempCurX1 = CurX1 remove precision
     movmi r5, #0                            @@ If (tempCurX1 < 0) tempCurX1 = 0
@@ -959,88 +1224,95 @@ m3_drawTriangleClippedTop:
     movge r6, #CANVAS_WIDTH-1               @@ TempCurX2 = maxX
 
     subs r6, r6, r5                         @@ CurDeltaX = TempCurX2 - TempCurX1
-    bmi .L_drawTriangleClippedTopSkip       @@ If (CurDeltaX < 0) skip
+    bmi .L_drawTriangleClippedTopSkip\index @@ If (CurDeltaX < 0) skip
     add r6, r6, #1                          @@ Add bias to right side
 
     add r5, r9, r5, lsl #BPP_POW            @@ pixel address = CurY pixel address + TempCurX1 * bytes per pixel
-    str r5, [r7, #DMA0_DST]                 @@ Write pixel address to dma destination address
+    str r5, [r7, #DMA3_DST]                 @@ Write pixel address to dma destination address
     orr r6, r6, #0x81000000                 @@ Set dma control to copy colour 'curDeltaX' times
-    str r6, [r7, #DMA0_CNT]                 @@ /
+    str r6, [r7, #DMA3_CNT]                 @@ /
 
-.L_drawTriangleClippedTopSkip:
+.L_drawTriangleClippedTopSkip\index:
     add r1, r1, r11                         @@ CurX1 += invSlope1
     add r10, r10, r12                       @@ CurX2 += invSlope2
     add r9, r9, r2, lsl #BPP_POW            @@ CurY pixel address += screen width * bytes per pixel
     cmp r4, r9
-    bge .L_drawTriangleClippedTopLoop       @@ Loop while (y2/y3 >= curY)
+    blt .L_drawTriangleClippedTopLoopEnd    @@ Return if (y2/y3 < curY)
+.endr
+    b .L_drawTriangleClippedTopLoop         @@ Loop while (y2/y3 >= curY)
+
+.L_drawTriangleTopLoop:                     @@ Draw loop without x-clipping
+.irp index, TRI_LOOP_UNROLL
+    asr r5, r1, #16                         @@ TempCurX1 = CurX1 remove precision
+    asr r6, r10, #16                        @@ tempCurX2 = CurX2 remove precision
+
+    subs r6, r6, r5                         @@ CurDeltaX = TempCurX2 - TempCurX1
+    bmi .L_drawTriangleTopSkip\index        @@ If (CurDeltaX < 0) skip
+    add r6, r6, #1                          @@ Add bias to right side
+
+    add r5, r9, r5, lsl #BPP_POW            @@ pixel address = CurY pixel address + TempCurX1 * bytes per pixel
+    str r5, [r7, #DMA3_DST]                 @@ Write pixel address to dma destination address
+    orr r6, r6, #0x81000000                 @@ Set dma control to copy colour 'curDeltaX' times
+    str r6, [r7, #DMA3_CNT]                 @@ /
+
+.L_drawTriangleTopSkip\index:
+    add r1, r1, r11                         @@ CurX1 += invSlope1
+    add r10, r10, r12                       @@ CurX2 += invSlope2
+    add r9, r9, r2, lsl #BPP_POW            @@ CurY pixel address += screen width * bytes per pixel
+    cmp r4, r9
+    blt .L_drawTriangleClippedTopLoopEnd    @@ Return if (y2/y3 < curY)
+.endr
+    b .L_drawTriangleTopLoop                @@ Loop while (y2/y3 >= curY)
+
 .L_drawTriangleClippedTopLoopEnd:
     pop {r4-r7}                             @@ Return
     bx lr                                   @@ /
 .size m3_drawTriangleClippedTop, .-m3_drawTriangleClippedTop
 
 
-@@ Parameters: (r0, vram addr), (r1, x1),       (r2, y1),       (r3, z1), 
-@@                              (sp #0, x2),    (sp #4, y2),    (sp #8, z2), 
-@@                              (sp #12, x3),   (sp #16, y3),   (sp #20, z3), 
-@@             (sp #24, 16 bit color addr)
+@@ Parameters: (r0, palette source addr), (r1, palette length), (r2, palette destination index)
 @@ Return: void
 .section .iwram, "ax", %progbits
 .align 2
 .arm
-.global m3_drawTriangleClipped3D
-.type m3_drawTriangleClipped3D STT_FUNC
-m3_drawTriangleClipped3D:
-    cmp r3, #NEAR_PLANE
-    bxlt lr
+.global setSpritePalette
+.type setSpritePalette STT_FUNC
+setSpritePalette:
+    mov r3, #ADDR_PAL                   @@ Calculate obj palette destination adress.
+    add r3, r3, #0x200                  @@ /
+    add r3, r2, lsl #1                  @@ / 
 
-    mov r12, lr
-	push {r4-r12}
-	ldr r12, =LUT_DIVISION
-                                        @@ Vertex1 to screen pos
-    lsl r1, r1, #FOV_POW                @@ x1 * fov
-    lsl r2, r2, #FOV_POW                @@ y1 * fov
-	ldr r3, [r12, r3, lsl #2]           @@ Load 1 / z1
-	smull r9, r1, r1, r3                @@ (x1 * fov) / z1
-	smull r9, r2, r2, r3                @@ (y1 * fov) / z1
-	add r1, r1, #CANVAS_WIDTH/2         @@ sX1 = (x1 * fov) / z1 + centerScreenX
-	add r2, r2, #CANVAS_HEIGHT/2        @@ sY1 = (y1 * fov) / z1 + centerScreenY
-		
-	add r10, sp, #36                    @@ Get offset into the stack
-	ldmia r10, {r3-r8, r10}             @@ Load Vertex2, Vertex3 and colour
+    mov r2, #ADDR_IO                    @@ Load dma base adress
+    str r3, [r2, #DMA3_DST]             @@ Write obj palette destination address to dma destination address
+    str r0, [r2, #DMA3_SRC]             @@ Write palette source address to dma source address   
 
-                                        @@ Vertex2 to screen pos
-    lsl r3, r3, #FOV_POW                @@ x2 * fov
-    lsl r4, r4, #FOV_POW                @@ y2 * fov
-	ldr r5, [r12, r5, lsl #2]           @@ Load 1 / z2
-	smull r9, r3, r3, r5                @@ (x2 * fov) / z2
-	smull r9, r4, r4, r5                @@ (y2 * fov) / z2
-	add r3, r3, #CANVAS_WIDTH/2         @@ sX2 = (x2 * fov) / z2 + centerScreenX
-	add r4, r4, #CANVAS_HEIGHT/2        @@ sY2 = (y2 * fov) / z2 + centerScreenY
+    mov r3, #0x80000000                 @@ Set dma control to copy palette colors palette length times
+    orr r3, r3, r1                      @@ /
+    str r3, [r2, #DMA3_CNT]             @@ /
 
-                                        @@ Vertex3 to screen pos
-    lsl r6, r6, #FOV_POW                @@ x3 * fov
-    lsl r7, r7, #FOV_POW                @@ y3 * fov
-	ldr r8, [r12, r8, lsl #2]           @@ Load 1 / z3
-	smull r9, r5, r6, r8                @@ (x3 * fov) / z3
-	smull r9, r6, r7, r8                @@ (y3 * fov) / z3
-	add r5, r5, #CANVAS_WIDTH/2         @@ sX3 = (x3 * fov) / z3 + centerScreenX
-	add r6, r6, #CANVAS_HEIGHT/2        @@ sY3 = (y3 * fov) / z3 + centerScreenY
+    bx lr                               @@ Return
+.size setSpritePalette, .-setSpritePalette
 
-#if BACKFACE_CULLING == 1
-    sub r7, r3, r1                      @@ Get triangle side vectors
-    sub r8, r4, r2                      @@ /
-    sub r9, r5, r1                      @@ /
-    sub r11, r6, r2                     @@ /
 
-    mul r7, r7, r11                     @@ Calculate cross product
-    mul r8, r8, r9                      @@ /
-    subs r7, r7, r8                     @@ / 
+@@ Parameters: (r0, sprite sheet source addr), (r1, sprite sheet length), (r2, sprite destination index)
+@@ Return: void
+.section .iwram, "ax", %progbits
+.align 2
+.arm
+.global setSpriteSheet
+.type setSpriteSheet STT_FUNC
+setSpriteSheet:
+    mov r3, #ADDR_VRAM                  @@ Calculate sprite destination adress.
+    add r3, r3, #0x14000                @@ /
+    add r3, r2, lsl #6                  @@ / 
 
-    bmi .G_drawTriangleClippedAsm       @@ Draw 2d triangle, if facing camera
-#else
-	b .G_drawTriangleClippedAsm         @@ Draw 2d triangle
-#endif
-.L_drawTriangleClipped3dEnd:
-    pop {r4-r12}                        @@ Return
-    bx r12                              @@ /
-.size m3_drawTriangleClipped3D, .-m3_drawTriangleClipped3D
+    mov r2, #ADDR_IO                    @@ Load dma base adress
+    str r3, [r2, #DMA3_DST]             @@ Write sprite destination address to dma destination address
+    str r0, [r2, #DMA3_SRC]             @@ Write sprite sheet source address to dma source address   
+
+    mov r3, #0x84000000                 @@ Set dma control to copy sprite, sprite sheet length times
+    orr r3, r3, r1, lsl #4              @@ /
+    str r3, [r2, #DMA3_CNT]             @@ /
+
+    bx lr                               @@ Return
+.size setSpriteSheet, .-setSpriteSheet

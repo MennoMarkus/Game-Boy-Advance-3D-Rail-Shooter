@@ -1,7 +1,7 @@
 @ Size: 1004 bytes
 @       1.004000 kilobytes
 .data
-.section .rodata
+.section .iwram
 .align 2
 .global LUT_DIVISION
 LUT_DIVISION:
