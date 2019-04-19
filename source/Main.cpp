@@ -1,7 +1,9 @@
 #include "../include/asm/graphics.h"
 #include "../include/asm/utils.h"
 #include "../include/input.h"
+#include "../include/asm/gameObject.h"
 #include "../include/objModel.h"
+#include "../include/objModelGM.h"
 
 // 1, 8x8 sprite per row.
 const unsigned short PLANE_SPRITES[] = {
@@ -45,6 +47,13 @@ unsigned short* OAM_MEM =(unsigned short*)0x7000000;	//setup a pointer to OBJ me
 
 int main(void)
 {
+    pushGameObject(8, 9, 10, 11, (u32)(updateEnemy));
+    pushGameObject(8, 9, 10, 11, (u32)(updateEnemy));
+    pushGameObject(8, 9, 10, 11, (u32)(updateEnemy));
+    pushGameObject(8, 9, 10, 11, (u32)(updateEnemy));
+    pushGameObject(8, 9, 10, 11, (u32)(updateEnemy));
+    popGameObject();
+
     // Camera setup
     s32 camX = 0;
     s32 camY = 0;
@@ -58,6 +67,9 @@ int main(void)
     setSpritePalette((u32)(&COLOR_PALETTE));
     setSpriteSheet((u32)(&PLANE_SPRITES), 8);
 
+    // debug
+    u32 testColor = 0xFF;
+    bool drawThick = true;
 	OAM_MEM[0] = COLOR_256 | SIZE_16 | 50; // 256 color mode. Height: 16 pixels. Ypos: 50
 	OAM_MEM[1] = SIZE_32 | 110;	// Width: 32 pixels. Xpos: 110.
 	OAM_MEM[2] = 512 + 0; // Tile number, starting at 512 because bitmap mode is used.
@@ -65,14 +77,32 @@ int main(void)
 
 	while(true) {
         g_GraphicsAddr = startDraw(g_GraphicsAddr);
-        noCashStartTimer();
         clearScr(g_GraphicsAddr, (u32)(&clrScreenColor), 0);
-        noCashStopTimer();
         keyPoll();
 
+        noCashStartTimer();
+        noCashStopTimer();
+        // Update
+        //updateGameObjects();
+        noCashPrintVar("Camera (%vl%, %vl%, %vl%)", camX, camY, camZ);
+
         // Rendering
-        m3_draw3DModel(g_GraphicsAddr, (u32)(&OBJMODEL), OBJMODEL_SIZE, camX, camY, camZ);
-        
+        //draw3DModel(g_GraphicsAddr, (u32)(&CANYON), CANYON_SIZE, camX, camY, camZ);
+        draw3DModel(g_GraphicsAddr, (u32)(&OBJMODEL), OBJMODEL_SIZE, camX, camY, camZ);
+
+        //drawLine(g_GraphicsAddr, 120, 80,  -5, 5, 0xFF);
+        //drawLine(g_GraphicsAddr, 120, 80, 120, 5, 0xFF);
+        //drawLine(g_GraphicsAddr, 120, 80, 245, 5, 0xFF);
+        //drawLine(g_GraphicsAddr, 120, 80, -5 , 80, 0xFF);
+        //drawLine(g_GraphicsAddr, 120, 80, 120, 80, 0xFF);
+        //drawLine(g_GraphicsAddr, 120, 80, 245, 80, 0xFF);
+        //drawLine(g_GraphicsAddr, 120, 80,  -5, 155, 0xFF);
+        //drawLine(g_GraphicsAddr, 120, 80, 120, 155, 0xFF);
+        //drawLine(g_GraphicsAddr, 120, 80, 245, 155, 0xFF);
+        //drawHorzLine(g_GraphicsAddr, 0, 60, 240, (u32)(&testColor));
+        //drawVertLine(g_GraphicsAddr, 100, 0, 160, (u32)(&testColor));
+        //drawPixel(g_GraphicsAddr, 10, 20, 0xFF);
+
         // Movement
         if (keyIsDown(KEY_RIGHT))
             camX--;
@@ -88,8 +118,11 @@ int main(void)
             camZ++;
 
         // Pause
-        if (keyIsDown(KEY_START)) {
-            BREAK
+        if (keyIsPressed(KEY_START)) {
+            bool isWireFrame = !isWireframeEnabled();
+            setWireframe(!isWireframeEnabled(), drawThick);
+            if (isWireFrame)
+                drawThick = !drawThick;
         }
     }
 

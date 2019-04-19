@@ -1,5 +1,18 @@
-maxDenominator = 250 #Value between 0 and 1073741823
-outputFileName = "lutDivisions.s"
+import os
+import sys
+import math
+
+# Set excecution dir to this files dir
+exeDir = ''
+if getattr(sys, 'frozen', False):
+        exeDir = os.path.dirname(sys.executable)
+else:
+        exeDir = os.path.dirname(os.path.realpath(__file__))
+os.chdir(exeDir)
+print(os.getcwd())
+
+maxDenominator = 255 #Value between 0 and 1073741823
+outputFileName = "../source/asm/lutDivisions.s"
 
 f = open(outputFileName, "w+")
 f.write("@ Size: %d bytes\n" % ((maxDenominator + 1) * 4))
@@ -13,7 +26,7 @@ while i <= maxDenominator:
     elif i == 1:
         r = 4294967295
     else:
-        r = round((1/i) * 4294967296)
+        r = math.ceil((1/i) * 4294967296)
     f.write("    .word %d @ 1 / %d\n" % (r, i))
     i += 1
 

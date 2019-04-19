@@ -22,9 +22,10 @@ directionalLightZ = 1
 directionalLightR = 1
 directionalLightG = 1
 directionalLightB = 1
-scaleX = 0.5
-scaleY = 0.5
-scaleZ = 0.5
+
+scaleX = 1
+scaleY = 1
+scaleZ = 1
 
 # Get all gmMod files
 def getFiles(dirName):
@@ -152,5 +153,6 @@ for gmModFileName, triangles in gmModTriangles.items():
     gmModName = (gmModFileName[:-6]).upper()
     f.write("#define " + gmModName + "_SIZE %d\n" % (len(triangles)))
     f.write('extern "C" const s16 ' + gmModName + '[' + gmModName + '_SIZE][10];\n\n')
+f.close() 
 
 print("SUCCES")

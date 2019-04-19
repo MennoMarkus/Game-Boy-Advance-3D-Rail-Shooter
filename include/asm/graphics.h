@@ -4,7 +4,7 @@
 
 // The buffer in RAM memory that functions as a graphics buffer in mode 3 dubble buffering.
 #if GRAPHICS_MODE == 3 && DUBBLE_BUFFER == 1
-extern "C" const u16 GRAPHICS_BUFFER[CANVAS_HEIGHT][CANVAS_WIDTH];
+extern "C" u16 GRAPHICS_BUFFER[CANVAS_HEIGHT][CANVAS_WIDTH];
 #endif
 
 // The memory address of the start of a buffer where graphics data can be written for rendering to the screen.
@@ -25,10 +25,10 @@ extern "C" void initGraphics();
 extern "C" void clearScr(u32 graphicsAddr, u32 colorAddr, u32 clearMode = 0);
 extern "C" u32 startDraw(u32 graphicsAddr);
 
-extern "C" void m3_drawPixel(u32 graphicsAddr, u32 x, u32 y, u16 color);
-extern "C" void m3_drawLine(u32 graphicsAddr, u32 x, u32 y, u32 x2, u32 y2, u16 color);
-extern "C" void m3_drawHorzLine(u32 graphicsAddr, u32 x, u32 y, s32 width, u32 color16Addr);
-extern "C" void m3_drawVertLine(u32 graphicsAddr, u32 x, u32 y, s32 height, u32 color16Addr);
+extern "C" void drawPixel(u32 graphicsAddr, u32 x, u32 y, u16 color);
+extern "C" void drawLine(u32 graphicsAddr, u32 x, u32 y, u32 x2, u32 y2, u16 color);
+extern "C" void drawHorzLine(u32 graphicsAddr, u32 x, u32 y, s32 width, u32 color16Addr);
+extern "C" void drawVertLine(u32 graphicsAddr, u32 x, u32 y, s32 height, u32 color16Addr);
 extern "C" void m3_drawRectFromCenter(u32 graphicsAddr, u32 x, u32 y, u32 halfWidth, u32 halfHeight, u32 color32Addr);
 extern "C" void m3_drawRectFromCorner(u32 graphicsAddr, u32 x, u32 y, u32 width, u32 height, u32 color16Addr);
 extern "C" void m3_drawRectEmpty(u32 graphicsAddr, u32 x, u32 y, u32 width, u32 height, u32 color16Addr);
@@ -37,7 +37,9 @@ extern "C" void m3_drawCircleEmpty(u32 graphicsAddr, u32 x, u32 y, u32 radius, u
 extern "C" void m3_mirrorScreenHorz(u32 graphicsAddr);
 extern "C" void m3_mirrorScreenVert(u32 graphicsAddr);
 extern "C" void m3_mirrorScreenDiag(u32 graphicsAddr);
-extern "C" void m3_draw3DModel(u32 graphicsAddr, u32 modeladdr, u32 triangleCount, s32 camX, s32 camY, s32 camZ);
+extern "C" void setWireframe(bool enabled, bool useThickLines=false);
+extern "C" bool isWireframeEnabled();
+extern "C" void draw3DModel(u32 graphicsAddr, u32 modeladdr, u32 triangleCount, s32 camX, s32 camY, s32 camZ);
 extern "C" void m3_drawTriangleClipped(u32 graphicsAddr, s32 x1, s32 y1, s32 x2, s32 y2, s32 x3, s32 y3, u32 color16Addr);
 extern "C" void m3_drawTriangle3D(u32 graphicsAddr, s32 x1, s32 y1, s32 z1, s32 x2, s32 y2, s32 z2, s32 x3, s32 y3, s32 z3, u32 color16Addr);
 
@@ -45,42 +47,6 @@ extern "C" void setSpritePalette(u32 paletteSourceAddr, u32 palletLength = 256, 
 extern "C" void setSpriteSheet(u32 spriteSheetSourceAddr, u32 spriteCount = 256, u8 spriteDestinationIndex = 0);
 
 // Wrappers for easy compatibility between mode 3 and 5.
-static inline void drawPixel(u32 graphicsAddr, u32 x, u32 y, u16 color) 
-{
-    #if GRAPHICS_MODE == 3 
-    m3_drawPixel(graphicsAddr, x, y, color); 
-    #elif GRAPHICS_MODE == 5 
-    m3_drawPixel(graphicsAddr, y, x / 2, color); 
-    #endif
-}
-
-static inline void drawLine(u32 graphicsAddr, u32 x, u32 y, u32 x2, u32 y2, u16 color) 
-{
-    #if GRAPHICS_MODE == 3 
-    m3_drawLine(graphicsAddr, x, y, x2, y2, color); 
-    #elif GRAPHICS_MODE == 5 
-    m3_drawLine(graphicsAddr, y, x / 2, y2, x2 / 2, color); 
-    #endif
-}
-
-static inline void drawHorzLine(u32 graphicsAddr, u32 x, u32 y, s32 width, u32 color16Addr) 
-{
-    #if GRAPHICS_MODE == 3 
-    m3_drawHorzLine(graphicsAddr, x, y, width, color16Addr); 
-    #elif GRAPHICS_MODE == 5 
-    m3_drawVertLine(graphicsAddr, y, x / 2, width / 2, color16Addr); 
-    #endif
-}
-
-static inline void drawVertLine(u32 graphicsAddr, u32 x, u32 y, s32 height, u32 color16Addr) 
-{
-    #if GRAPHICS_MODE == 3 
-    m3_drawVertLine(graphicsAddr, x, y, height, color16Addr); 
-    #elif GRAPHICS_MODE == 5 
-    m3_drawHorzLine(graphicsAddr, y, x / 2, height, color16Addr); 
-    #endif
-}
-
 static inline void drawRectFromCenter(u32 graphicsAddr, u32 x, u32 y, u32 halfWidth, u32 halfHeight, u32 color32Addr) 
 {
     #if GRAPHICS_MODE == 3
