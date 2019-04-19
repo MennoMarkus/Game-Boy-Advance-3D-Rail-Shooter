@@ -22,6 +22,7 @@ directionalLightZ = 1
 directionalLightR = 1
 directionalLightG = 1
 directionalLightB = 1
+
 scaleX = 1
 scaleY = 1
 scaleZ = 1
