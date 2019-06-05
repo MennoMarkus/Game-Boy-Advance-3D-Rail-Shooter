@@ -1,4 +1,8 @@
-#include "../../include/delcs.h"
+#include "../../include/utils/delcs.h"
+#include "../utils/macros.s"
+#include "../../include/graphics/resolutions.h"
+
+#ifdef ASSEMBLE_GRAPHICS_S
 
 @@ Data available:
 @@ - GRAPHICS_BUFFER
@@ -99,7 +103,7 @@ disableWireframeDataSrc4:
 .equiv wireframeDataSize5, 3
 enableWireframeDataSrc5:
     .macro M_ENABLEWIREFRAMEDATASCR5
-        add r8, pc, #WIREFRAME_COLOR - .G_wireframeDataDst5         @@ Load color address using relative offset
+        @add r8, pc, #WIREFRAME_COLOR - .G_wireframeDataDst5         @@ Load color address using relative offset
         sub r8, r8, #8                                              @@ /
         ldr r8, [r8]                                                @@ Load color
     .endm
@@ -159,16 +163,13 @@ disableWireframeDataSrc6:
 
 @ A ram buffer containing graphics data to be draw to the screen.
 @ 76800 bytes
-@TODO use .sbss to save on rom memory
-#if GRAPHICS_MODE == 3 && DUBBLE_BUFFER == 1
-.section .ewram
-.align 2
-.global GRAPHICS_BUFFER
-GRAPHICS_BUFFER:
-.rept 38400
-    .hword 0xFF
-.endr
-    .size GRAPHICS_BUFFER, .-GRAPHICS_BUFFER
+#if GRAPHICS_MODE == 3 && DEFAULT_DOUBLE_BUFFER == 1
+@.section .ewram
+@.align 2
+@.global GRAPHICS_BUFFER
+@GRAPHICS_BUFFER:
+@.fill 38400,1,0
+@    .size GRAPHICS_BUFFER, .-GRAPHICS_BUFFER
 #endif
 
 @@ Functions available:
@@ -185,351 +186,452 @@ GRAPHICS_BUFFER:
 @@ - m3_drawCircleEmpty
 @@ - m3_mirrorScreenHorz
 @@ - m3_mirrorScreenVert
-@@ - m3_drawTriangleClipped3D
-@@      |- m3_drawTriangleClipped
-@@ - m3_drawTriangleClipped
-@@      |- m3_drawTriangleClippedBottom
-@@      |- m3_drawTriangleClippedTop
+@@ - drawTriangleClipped3D
+@@      |- drawTriangleClipped
+@@ - drawTriangleClipped
+@@      |- drawTriangleClippedBottom
+@@      |- drawTriangleClippedTop
 @@ - setSpritePalette
 @@ - setSpriteSheet
 
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-@@ ----------FUNCTIONS---------- @@
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@
+@@-----CODE-----@@
+@@@@@@@@@@@@@@@@@@
 .text
 
-@@ Parameters: void
+@@ Summary:
+.global clearScreen
+.global drawPixel
+.global drawLine
+.global drawHorzLine
+.global drawVertLine
+.global setSpritePalette
+.global setSpriteSheet
+.global draw3DModel
+.global drawTriangle3D
+.global drawTriangleClipped
+
+@@ Parameters: (r0, color addr), (r1, ClearScreenMode)
 @@ Return: void
-.align 2
-.arm
-.global initGraphics
-.type initGraphics STT_FUNC
-initGraphics:
-    mov r0, #ADDR_IO
-    mov r1, #0x1400					@@ /
-#if GRAPHICS_MODE == 3
-    add r1, r1, #0x43               @@ Load value #0x1443 to enable gfx mode 3, bg 2 and 1d sprite drawing.
-#elif GRAPHICS_MODE == 5
-    add r1, r1, #0x45				@@ Load value #0x1445 to enable gfx mode 5, bg 2 and 1d sprite drawing.
-#endif
-    strh r1, [r0]					@@ Write value to memory
+FUNC_IWRAM clearScreen
+    mov r3, #ADDR_IO							@@ Load base address
+	add r12, r3, #DMA3_SRC						@@ /
+    mov r2, #FRAME_BUFFER_ADDR       			@@ Load graphics address
+    ldr r2, [r2]                        		@@ /
+	stmia r12, {r0, r2}							@@ Write color and graphics address to dma source and destination address   
 
-#if GRAPHICS_MODE == 5
-    mov	r2, #0x4000000				@@ Rotate background 90 degrees and scale x-axis by 2 after
-	mov	r0, #0x0					@@ /
-	mov	r1, #0x100					@@ /
-	mov	r3, #0x80					@@ /
-	strh r0, [r2, #0x20]			@@ /
-	strh r1, [r2, #0x22]			@@ /
-	strh r3, [r2, #0x24]			@@ /
-	strh r0, [r2, #0x26]			@@ /
-#endif
-    bx lr					        @@ Return
-.size initGraphics, .-initGraphics
+    #if TARGET_PLATFORM == TARGET_GBA
+		mov r2, #0x85000000                 	@@ Set dma control to copy colour
+		cmp r1, #1                          	@@ Clear left side if left mode is selected (clear mode == 2)
 
+        .macro clearScreenTop_RESOLUTION_X240Y160
+			addhi pc, pc, #12					@@ bhi .L_clearScrLeft
+            orrne r2, r2, #0x4B00               @@ 0x4b00 times, a full screen, if mode none is selected (clear mode == 0)
+            orreq r2, r2, #0x2580               @@ 0x2580 times, a half screen, if top mode is selected (clear mode == 1)
+        .endm
+        RUNTIME_REPLACE_OPTION clearScreenTop, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), clearScreenTop_RESOLUTION_X240Y160
+        .macro clearScreenTop_RESOLUTION_X160Y120    
+			addeq pc, pc, #12 					@@ blt .L_clearScrLeft
+			orrlt r2, r2, #0x2580               @@ 0x2580 times, a full screen, if mode none is selected (clear mode == 0)
+    		orrgt r2, r2, #0x12C0               @@ 0x12C0 times, a half screen, if left mode is selected (clear mode == 2)
+        .endm
+        RUNTIME_REPLACE_OPTION clearScreenTop, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), clearScreenTop_RESOLUTION_X160Y120
+		str r2, [r3, #DMA3_CNT]             	@@ /
+		bx lr                               	@@ Return
 
-@@ Parameters: (r0, graphics data addr)
-@@ Return: (r0, write graphics data addr)
-.section .iwram, "ax", %progbits
-.align 2
-.arm
-.global startDraw
-.type startDraw STT_FUNC
-startDraw:
-    mov r1, #ADDR_IO            	@@ /
-.L_vDrawWait:                       @@ Wait for vdraw, as to not draw when the screen is being drawn
-    ldrh r2, [r1, #6]				@@ Load the vcount
-    cmp r2, #0                      @@ Compare to first scan line number, the start of the screen and start of vdraw
-    bne .L_vDrawWait                @@ /
-.L_vBlankWait:                      @@ Wait for vblank, as to not draw when the screen is being drawn
-    ldrh r2, [r1, #6]				@@ Load the vcount
-	cmp r2, #SCREEN_HEIGHT     		@@ Compare to last scan line number, the end of the screen and start of vblank
-	bne .L_vBlankWait				@@ /
+	.L_clearScrLeft:
+		.macro clearScreenLeft_RESOLUTION_X240Y160
+			mov r1, #160              			@@ Height
 
-#if GRAPHICS_MODE == 5  && DUBBLE_BUFFER == 1
-    eor r0, r0, #0xA000             @@ Switch vram buffer by xor with page flip size
-    ldrh r2, [r1]
-    eor r2, r2, #0x10
-    strh r2, [r1]
-#elif GRAPHICS_MODE == 3 && DUBBLE_BUFFER == 1
-    mov r2, #ADDR_VRAM
-    str r0, [r1, #DMA3_SRC]         @@ Write graphics buffer address to dma source address   
-    str r2, [r1, #DMA3_DST]         @@ Write vram address to dma destination address
+			orr r2, r2, #240 / 4       			@@ Copy colour half width times
+			str r2, [r3, #DMA3_CNT]             @@ /
 
-    mov r3, #0x84000000             @@ Set dma control to copy pixel 0x4b00 times
-    orr r3, r3, #0x4B00             @@ /
-    str r3, [r1, #DMA3_CNT]         @@ /
-#endif
-    bx lr                           @@ Return
-.size startDraw, .-startDraw
+			subs r1, #1                        	@@ Height -= 1
+			add r0, r0, #240 * (BPP/8) 			@@ Move destination to next row
+		.endm
+		RUNTIME_REPLACE_OPTION clearScreenLeft, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), clearScreenLeft_RESOLUTION_X240Y160
+		.macro clearScreenLeft_RESOLUTION_X160Y120
+			mov r1, #120              			@@ Height
+			
+			orr r2, r2, #160 / 4       			@@ Copy colour half width times
+			str r2, [r3, #DMA3_CNT]             @@ /
+
+			subs r1, #1                         @@ Height -= 1
+			add r0, r0, #160 * (BPP/8) 			@@ Move destination to next row
+		.endm
+		RUNTIME_REPLACE_OPTION clearScreenLeft, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), clearScreenLeft_RESOLUTION_X160Y120
+		str r0, [r3, #DMA3_DST]             	@@ /
+		subne pc, pc, #24						@@ While Height > 0, copy rows
+
+    #elif TARGET_PLATFORM == TARGET_LINUX
+        ASM_BREAK								@@ TODO linux support
+    #endif
+
+	bx lr                               		@@ Return
+FUNC_END clearScreen
 
 
-@@ Parameters: (r0, graphics addr), (r1, color addr), (r2, clear mode)
-@@ Comments: Available clear modes - (0, none,  clears entire screen)
-@@                                 - (1, top,   clears top half for vert/diag mirroring)
-@@                                 - (2, left,  clears left side for horz mirroring)
+@@ Parameters: (r0, x), (r1, y), (r2, color addr)
 @@ Return: void
-.section .iwram, "ax", %progbits
-.align 2
-.arm
-.global clearScr
-.type clearScr STT_FUNC
-clearScr:
-    mov r3, #ADDR_IO
-    str r1, [r3, #DMA3_SRC]             @@ Write color address to dma source address   
-    str r0, [r3, #DMA3_DST]             @@ Write graphics address to dma destination address
+FUNC_IWRAM drawPixel
+    .macro drawPixel_RESOLUTION_X240Y160
+        rsb r1, r1, r1, lsl #4          	@@ y *= 240 (width)
+        add r1, r0, r1, lsl #4              @@ Pixel = y * width + x
+    .endm
+    RUNTIME_REPLACE_OPTION drawPixelResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawPixel_RESOLUTION_X240Y160
+    #if TARGET_PLATFORM == TARGET_GBA
+        .macro drawPixel_RESOLUTION_X160Y120
+            add r0, r0, r0, lsl #2          @@ x *= 160 / 2 (width)
+            add r1, r1, r0, lsl #4          @@ Pixel = x * width / 2 + y
+        .endm
+        RUNTIME_REPLACE_OPTION drawPixelResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawPixel_RESOLUTION_X160Y120
+    #elif TARGET_PLATFORM == TARGET_LINUX
+        .macro drawPixel_RESOLUTION_X160Y120
+			rsb r1, r1, r1, lsl #4			@@ y *= 120 (width)
+        	add r1, r0, r1, lsl #3			@@ Pixel = y * width + x
+        .endm
+        RUNTIME_REPLACE_OPTION drawPixelResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawPixel_RESOLUTION_X160Y120
+        .macro drawPixel_RESOLUTION_X320Y240
+			rsb r1, r1, r1, lsl #2			@@ y *= 320 (width)
+        	add r1, r0, r1, lsl #6			@@ Pixel = y * width + x
+        .endm
+        RUNTIME_REPLACE_OPTION drawPixelResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X320Y240), drawPixel_RESOLUTION_X320Y240
+        .macro drawPixel_RESOLUTION_X480Y240
+			rsb r1, r1, r1, lsl #4			@@ y *= 480 (width)
+        	add r1, r0, r1, lsl #5			@@ Pixel = y * width + x
+        .endm
+        RUNTIME_REPLACE_OPTION drawPixelResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X480Y240), drawPixel_RESOLUTION_X480Y240
+    #endif
 
-#if GRAPHICS_MODE == 3
-    mov r1, #0x85000000                 @@ Set dma control to copy colour
+	mov r0, #FRAME_BUFFER_ADDR       		@@ Pixel addr = graphics addr + pixel * bytes per pixel
+    ldr r0, [r0]                        	@@ /
+	add r0, r0, r1, lsl #BPP_POW			@@ /
+	strh r2, [r0]							@@ Write pixel color
+	bx lr									@@ Return
+FUNC_END drawPixel
 
-    cmp r2, #1                          @@ Clear left side if left mode is selected (clear mode == 2)
-    bhi .L_clearScrLeft                 @@ /
 
-    orrne r1, r1, #0x4B00               @@ 0x4b00 times, a full screen, if mode none is selected (clear mode == 0)
-    orreq r1, r1, #0x2580               @@ 0x2580 times, a half screen, if top mode is selected (clear mode == 1)
-    str r1, [r3, #DMA3_CNT]             @@ /
-    bx lr                               @@ Return
+@@ Parameters: (r0, x1), (r1, y1), (r2, x2), (r3, y2) (sp #0, 16 bit color)
+@@ Return: void
+FUNC_IWRAM drawLine
+    push {r4, r10, r11}
+    ldrh r10, [sp, #12]         			@@ Load color from the stack
 
-.L_clearScrLeft:
-    mov r2, #CANVAS_HEIGHT              @@ Height
-.L_clearScrLeftLoop:
-    orr r1, r1, #CANVAS_WIDTH / 4       @@ Copy colour half width times
-    str r1, [r3, #DMA3_CNT]             @@ /
+    #if TARGET_PLATFORM == TARGET_GBA
+        .macro drawline_swap_RESOLUTION_X240Y160
+            add pc, pc, #16					@@ Skip padding data
+            nop								@@ Padding data
+            nop								@@ /
+            nop								@@ /
+            nop								@@ /
+            nop								@@ /
+        .endm
+        RUNTIME_REPLACE_OPTION drawLineSwapResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawline_swap_RESOLUTION_X240Y160
+        .macro drawline_swap_RESOLUTION_X160Y120
+            mov r12, r1                     @@ Temp = y1
+            mov r1, r0, asr #1              @@ y1 = x1 / 2
+            mov r0, r12                     @@ x1 = temp (y1)
 
-    subs r2, #1                         @@ Height -= 1
-    add r0, r0, #CANVAS_WIDTH * BPP     @@ Move destination to next row
-    str r0, [r3, #DMA3_DST]             @@ /
-    bne .L_clearScrLeftLoop             @@ While Height > 0, copy rows
+            mov r12, r3                     @@ Temp = y2
+            mov r3, r2, asr #1              @@ y2 = x2 / 2
+            mov r2, r12                     @@ x2 = temp (y2)
+        .endm
+        RUNTIME_REPLACE_OPTION drawLineSwapResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawline_swap_RESOLUTION_X160Y120
+    #endif
 
-    bx lr                               @@ Return
+	.macro drawLine_RESOLUTION_X240Y160
+		                            		@@ Clipping
+		bic r0, r0, r0, asr #31         	@@ max(x1, 0)
+		cmp r0, #240		           		@@ min(x1, width - 1)        
+		movge r0, #240-1       				@@ /
 
-#elif GRAPHICS_MODE == 5
-    mov r1, #0x85000000                 @@ Set dma control to copy colour
+		bic r1, r1, r1, asr #31         	@@ max(y1, 0)
+		cmp r1, #160			        	@@ min(y1, height - 1)        
+		movge r1, #160-1      				@@ /
+
+		bic r2, r2, r2, asr #31         	@@ max(x1, 0)
+		cmp r2, #240			        	@@ min(x1, width - 1)        
+		movge r2, #240-1       				@@ /
+
+		bic r3, r3, r3, asr #31         	@@ max(y2, 0)
+		cmp r3, #240			        	@@ min(y2, height - 1)        
+		movge r3, #240-1    				@@ /
+
+		mov r11, #240 * (BPP/8)				@@ stepY = width * bytes per pixel
+		subs r12, r3, r1                	@@ -deltaY = y2 - y1
+		negge r12, r12                  	@@ if y2 >= y1: negate -deltaY
+		neglt r11, r11                  	@@ if y2 < y1: negate stepY
+
+		rsb r1, r1, r1, lsl #4          	@@ y1 *= 240 (width)
+		lsl r1, r1, #4                  	@@ /
+		rsb r3, r3, r3, lsl #4          	@@ y2 *= 240 (width)
+		lsl r3, r3, #4                  	@@ /
+	.endm
+	RUNTIME_REPLACE_OPTION drawLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawLine_RESOLUTION_X240Y160
+	.macro drawLine_RESOLUTION_X160Y120
+		                                	@@ Clipping
+		bic r0, r0, r0, asr #31         	@@ max(x1, 0)
+		cmp r0, #160           				@@ min(x1, width - 1)        
+		movge r0, #160-1       				@@ /
+
+		bic r1, r1, r1, asr #31         	@@ max(y1, 0)
+		cmp r1, #120          				@@ min(y1, height - 1)        
+		movge r1, #120-1      				@@ /
+
+		bic r2, r2, r2, asr #31         	@@ max(x1, 0)
+		cmp r2, #160           				@@ min(x1, width - 1)        
+		movge r2, #160-1       				@@ /
+
+		bic r3, r3, r3, asr #31         	@@ max(y2, 0)
+		cmp r3, #120          				@@ min(y2, height - 1)        
+		movge r3, #120-1      				@@ /
+
+		mov r11, #160 * (BPP/8)				@@ stepY = CANVAS_WIDTH * bytes per pixel
+		subs r12, r3, r1                	@@ -deltaY = y2 - y1
+		negge r12, r12                  	@@ if y2 >= y1: negate -deltaY
+		neglt r11, r11                  	@@ if y2 < y1: negate stepY
+
+		add r1, r1, r1, lsl #2          	@@ y1 *= 160 (width)
+		lsl r1, r1, #5                  	@@ /
+		add r3, r3, r3, lsl #2          	@@ y2 *= 160 (width)
+		lsl r3, r3, #5                  	@@ /
+	.endm
+	RUNTIME_REPLACE_OPTION drawLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawLine_RESOLUTION_X160Y120
+	#if TARGET_PLATFORM == TARGET_LINUX
+		.macro drawLine_RESOLUTION_X320Y240
+			                                @@ Clipping
+			bic r0, r0, r0, asr #31         @@ max(x1, 0)
+			cmp r0, #320           			@@ min(x1, width - 1)        
+			movge r0, #320-1       			@@ /
+
+			bic r1, r1, r1, asr #31         @@ max(y1, 0)
+			cmp r1, #240         			@@ min(y1, height - 1)        
+			movge r1, #240-1      			@@ /
+
+			bic r2, r2, r2, asr #31         @@ max(x1, 0)
+			cmp r2, #320           			@@ min(x1, width - 1)        
+			movge r2, #320-1       			@@ /
+
+			bic r3, r3, r3, asr #31         @@ max(y2, 0)
+			cmp r3, #240          			@@ min(y2, height - 1)        
+			movge r3, #240-1      			@@ /
+
+			mov r11, #320 * (BPP/8)			@@ stepY = CANVAS_WIDTH * bytes per pixel
+			subs r12, r3, r1                @@ -deltaY = y2 - y1
+			negge r12, r12                  @@ if y2 >= y1: negate -deltaY
+			neglt r11, r11                  @@ if y2 < y1: negate stepY
+
+			add r1, r1, r1, lsl #2			@@ y1 *= 320 (width)
+        	lsl r1, r1, #6					@@ /
+			add r3, r3, r3, lsl #2			@@ y2 *= 320 (width)
+        	lsl r3, r3, #6					@@ /
+		.endm
+		RUNTIME_REPLACE_OPTION drawLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X320Y240), drawLine_RESOLUTION_X320Y240
+		.macro drawLine_RESOLUTION_X480Y240
+			                                @@ Clipping
+			bic r0, r0, r0, asr #31         @@ max(x1, 0)
+			cmp r0, #480           			@@ min(x1, width - 1)        
+			movge r0, #480-1       			@@ /
+
+			bic r1, r1, r1, asr #31         @@ max(y1, 0)
+			cmp r1, #240          			@@ min(y1, height - 1)        
+			movge r1, #240-1      			@@ /
+
+			bic r2, r2, r2, asr #31         @@ max(x1, 0)
+			cmp r2, #480           			@@ min(x1, width - 1)        
+			movge r2, #480-1       			@@ /
+
+			bic r3, r3, r3, asr #31         @@ max(y2, 0)
+			cmp r3, #240          			@@ min(y2, height - 1)        
+			movge r3, #240-1      			@@ /
+
+			mov r11, #480 * (BPP/8)			@@ stepY = CANVAS_WIDTH * bytes per pixel
+			subs r12, r3, r1                @@ -deltaY = y2 - y1
+			negge r12, r12                  @@ if y2 >= y1: negate -deltaY
+			neglt r11, r11                  @@ if y2 < y1: negate stepY
+
+			rsb r1, r1, r1, lsl #4			@@ y1 *= 480 (width)
+        	lsl r1, r1, #5					@@ /
+			rsb r3, r3, r3, lsl #4			@@ y1 *= 480 (width)
+        	lsl r3, r3, #5					@@ /
+		.endm
+		RUNTIME_REPLACE_OPTION drawLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X480Y240), drawLine_RESOLUTION_X480Y240
+	#endif
+
+    mov r4, #FRAME_BUFFER_ADDR       		@@ Load graphics buffer address
+    ldr r4, [r4]                        	@@ /
     
-    cmp r2, #1                          @@ Clear top side if mode top mode is selected (clear mode == 1)
-    beq .L_clearScrLeft                 @@ //
+    add r1, r1, r0                  		@@ start pixel = y1 * width + x1
+    add r1, r4, r1, lsl #BPP_POW    		@@ start pixel addr = graphics addr + start pixel * bytes per pixel
+    add r3, r3, r2                  		@@ end pixel = y2 * width + x2
+    add r4, r4, r3, lsl #BPP_POW    		@@ end pixel addr = graphics addr + end pixel * bytes per pixel
 
-    orrlt r1, r1, #0x2580               @@ 0x2580 times, a full screen, if mode none is selected (clear mode == 0)
-    orrgt r1, r1, #0x12C0               @@ 0x12C0 times, a half screen, if left mode is selected (clear mode == 2)
-    str r1, [r3, #DMA3_CNT]             @@ /
-    bx lr                               @@ Return
+    cmp r4, r1                      		@@ if line length == 0:
+    beq .L_drawLineEnd              		@@ end
 
-.L_clearScrLeft:
-    mov r2, #CANVAS_HEIGHT              @@ Height
-.L_clearScrLeftLoop:
-    orr r1, r1, #CANVAS_WIDTH / 4       @@ Copy colour half width times
-    str r1, [r3, #DMA3_CNT]             @@ /
+    mov r3, #-1                     		@@ stepX
+    subs r0, r0, r2                 		@@ deltaX = x1 - x2
+    neglt r0, r0                    		@@ if x1 < x2: negate deltaX
+    neglt r3, r3                    		@@ if x1 < x2: negate stepX
+    
+    add r2, r0, r12                 		@@ error = deltaX + -deltaY
 
-    subs r2, #1                         @@ Height -= 1
-    add r0, r0, #CANVAS_WIDTH * BPP     @@ Move destination to next row
-    str r0, [r3, #DMA3_DST]             @@ /
-    bne .L_clearScrLeftLoop             @@ While Height > 0, copy rows
+.L_drawLineLoop:
+    strh r10, [r1]                  		@@ Draw pixel
 
-    bx lr                               @@ Return
-#endif
-.size clearScr, .-clearScr
+    cmp r12, r2, lsl #1             		@@ if -deltaY <= error * 2
+    addle r1, r1, r3, lsl #BPP_POW  		@@ x += stepX * bytes per pixel
+    addle r2, r2, r12               		@@ error += -deltaY
+    cmple r1, r4
+    beq .L_drawLineEnd
+
+    cmp r0, r2, lsl #1              		@@ if deltaX > error * 2
+    addgt r1, r1, r11               		@@ y += stepY * CANVAS_WIDTH * bytes per pixel
+    addgt r2, r2, r0                		@@ error += deltaX
+
+    cmp r1, r4                      		@@ loop until start address == end address
+    bne .L_drawLineLoop
+
+.L_drawLineEnd:
+    pop {r4, r10, r11}
+    bx lr					        		@@ Return
+FUNC_END drawLine
+
+
+@@ Parameters: (r0, x), (r1, y), (r2, signed width), (r3, 16 bit color addr)
+@@ Return: void
+FUNC_IWRAM drawHorzLine
+    #if TARGET_PLATFORM == TARGET_GBA
+        .macro drawHorzLine_swap_RESOLUTION_X240Y160
+            add pc, pc, #12					@@ Skip padding data
+            nop								@@ Padding data
+            nop								@@ /
+            nop								@@ /
+            nop								@@ /
+			mov r12, #240					@@ width
+        .endm
+        RUNTIME_REPLACE_OPTION drawHorzLineSwapResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawHorzLine_swap_RESOLUTION_X240Y160
+        .macro drawHorzLine_swap_RESOLUTION_X160Y120
+            mov r12, r1                   	@@ Temp = y
+            mov r1, r0, asr #1            	@@ y = x / 2
+            mov r0, r12                   	@@ x =  temp (y)
+            mov r2, r2, asr #1            	@@ width /= 2
+			mov r12, #160					@@ width
+			add pc, pc, #.G_drawVertLineASM - (drawHorzLineSwapResolution_Dst + 28)
+        .endm
+        RUNTIME_REPLACE_OPTION drawHorzLineSwapResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawHorzLine_swap_RESOLUTION_X160Y120
+    #endif
+
+.G_drawHorzLineASM:
+    cmp r2, #0
+    negmi r2, r2                    @@ If width < 0: negate width
+    submi r0, r0, r2                @@ If width < 0: x -= width
+
+	.macro drawHorzLine_RESOLUTION_X240Y160
+		rsb r1, r1, r1, lsl #4          	@@ y *= 240 (width)
+		lsl r1, r1, #4                  	@@ /
+	.endm
+	RUNTIME_REPLACE_OPTION drawHorzLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawHorzLine_RESOLUTION_X240Y160
+	.macro drawHorzLine_RESOLUTION_X160Y120
+		add r1, r1, r1, lsl #2          	@@ y *= 160 (width)
+		lsl r1, r1, #5                  	@@ /
+	.endm
+	RUNTIME_REPLACE_OPTION drawHorzLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawHorzLine_RESOLUTION_X160Y120
+	#if TARGET_PLATFORM == TARGET_LINUX
+		.macro drawHorzLine_RESOLUTION_X320Y240
+			add r1, r1, r1, lsl #2			@@ y *= 320 (width)
+        	lsl r1, r1, #6					@@ /
+		.endm
+		RUNTIME_REPLACE_OPTION drawHorzLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X320Y240), drawHorzLine_RESOLUTION_X320Y240
+		.macro drawHorzLine_RESOLUTION_X480Y240
+			rsb r1, r1, r1, lsl #4			@@ y *= 480 (width)
+        	lsl r1, r1, #5					@@ /
+		.endm
+		RUNTIME_REPLACE_OPTION drawHorzLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X480Y240), drawHorzLine_RESOLUTION_X480Y240
+	#endif
+
+    add r1, r1, r0                  @@ pixel = y * width + x
+    mov r0, #FRAME_BUFFER_ADDR      @@ Load graphics buffer address
+    ldr r0, [r0]                    @@ /
+    add r1, r0, r1, lsl #BPP_POW    @@ pixel addr = graphics addr + start pixel * bytes per pixel
+
+    mov r0, #ADDR_IO                @@ Prepare dma address base
+    str r3, [r0, #DMA3_SRC]         @@ Write color address to dma source address
+    str r1, [r0, #DMA3_DST]         @@ Write pixel address to dma destination address
+    orr r2, r2, #0x81000000         @@ Set dma control to copy colour 'width' times
+    str r2, [r0, #DMA3_CNT]         @@ /
+
+    bx lr                           @@ Return
+FUNC_END drawHorzLine
+
+
+@@ Parameters: (r0, x), (r1, y), (r2, signed height), (r3, 16 bit color addr)
+@@ Return: void
+FUNC_IWRAM drawVertLine
+	#if TARGET_PLATFORM == TARGET_GBA
+        .macro drawVertLine_swap_RESOLUTION_X240Y160
+            add pc, pc, #8					@@ Skip padding data
+            nop								@@ Padding data
+            nop								@@ /
+            nop								@@ /
+			mov r12, #240					@@ width
+        .endm
+        RUNTIME_REPLACE_OPTION drawVertLineSwapResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawVertLine_swap_RESOLUTION_X240Y160
+        .macro drawVertLine_swap_RESOLUTION_X160Y120
+			mov r12, r1                     @@ Temp = y
+			mov r1, r0, asr #1              @@ y = x / 2
+			mov r0, r12                     @@ x =  temp (y)
+			mov r12, #160					@@ width
+			add pc, pc, #.G_drawHorzLineASM - (drawVertLineSwapResolution_Dst + 24)
+		.endm
+        RUNTIME_REPLACE_OPTION drawVertLineSwapResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawVertLine_swap_RESOLUTION_X160Y120
+	#endif
+.G_drawVertLineASM:
+    cmp r2, #0                 
+    negmi r2, r2                    @@ If height < 0: negate height
+    submi r1, r1, r2                @@ If height < 0: y -= height
+
+	.macro drawVertLine_RESOLUTION_X240Y160
+		rsb r1, r1, r1, lsl #4          	@@ y *= 240 (width)
+		lsl r1, r1, #4                  	@@ /
+	.endm
+	RUNTIME_REPLACE_OPTION drawVertLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawVertLine_RESOLUTION_X240Y160
+	.macro drawVertLine_RESOLUTION_X160Y120
+		add r1, r1, r1, lsl #2          	@@ y *= 160 (width)
+		lsl r1, r1, #5                  	@@ /
+	.endm
+	RUNTIME_REPLACE_OPTION drawVertLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawVertLine_RESOLUTION_X160Y120
+	#if TARGET_PLATFORM == TARGET_LINUX
+		.macro drawVertLine_RESOLUTION_X320Y240
+			add r1, r1, r1, lsl #2			@@ y *= 320 (width)
+        	lsl r1, r1, #6					@@ /
+		.endm
+		RUNTIME_REPLACE_OPTION drawVertLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X320Y240), drawVertLine_RESOLUTION_X320Y240
+		.macro drawVertLine_RESOLUTION_X480Y240
+			rsb r1, r1, r1, lsl #4			@@ y *= 480 (width)
+        	lsl r1, r1, #5					@@ /
+		.endm
+		RUNTIME_REPLACE_OPTION drawVertLineResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X480Y240), drawVertLine_RESOLUTION_X480Y240
+	#endif
+
+    add r0, r1, r0                  @@ pixel = y * width + x
+	mov r1, #FRAME_BUFFER_ADDR      @@ Load graphics buffer address
+    ldr r1, [r1]                    @@ /
+    add r0, r1, r0, lsl #BPP_POW    @@ pixel addr = graphics addr + start pixel * bytes per pixel
+
+    ldrh r3, [r3]                   @@ Get color value from addr
+    lsl r12, r12, #BPP_POW          @@ Setup (CANVAS_WIDTH) * bytes per pixel
+.L_drawVertLineLoopY:
+    strh r3, [r0], r12              @@ Draw pixel, and move down vertically
+    subs r2, #1                     @@ Height -= 1
+    bne .L_drawVertLineLoopY
+    bx lr                           @@ Return
+FUNC_END drawVertLine
 
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 @@ -------MODE 3 FUNCTIONS------- @@
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-
-
-@@ Parameters: (r0, graphics addr), (r1, x), (r2, y), (r3, 16 bit color)
-@@ Return: void
-.align 2
-.arm
-.global drawPixel
-.type drawPixel STT_FUNC
-drawPixel:
-#if GRAPHICS_MODE == 5 && PREPROCESSED_DATA == 0
-    add r1, r1, r1, lsl #2          @@ x *= 160 / 2 (width)
-    lsl r1, r1, #4                  @@ /
-    add r2, r1, r2                  @@ pixel = x * width / 2 + y
-    add r2, r0, r2, lsl #BPP_POW    @@ pixel addr = graphics addr + start pixel * bytes per pixel
-#else
-    rsb r2, r2, r2, lsl #4          @@ y *= 240 (width)
-    lsl r2, r2, #4                  @@ /
-    add r2, r2, r1                  @@ pixel = y * width + x
-    add r2, r0, r2, lsl #BPP_POW    @@ pixel addr = graphics addr + start pixel * bytes per pixel
-#endif
-
-    strh r3, [r2]               @@ write pixel
-    bx lr					    @@ Return
-.size drawPixel, .-drawPixel
-
-
-@@ Parameters: (r0, graphics addr), (r1, x1), (r2, y1), (r3, x2), (sp #0, y2) (sp #4, 16 bit color)
-@@ Return: void
-.align 2
-.arm
-.global drawLine
-.type drawLine STT_FUNC
-drawLine:
-    push {r4, r10, r11}
-    ldrh r10, [sp, #(4+12)]         @@ Load y2 and color from the stack
-    ldr r4, [sp, #(0+12)]           @@ /
-
-#if GRAPHICS_MODE == 5 && PREPROCESSED_DATA == 0
-    mov r12, r2                     @@ Temp = y1
-    mov r2, r1, asr #1              @@ y1 = x1 / 2
-    mov r1, r12                     @@ x1 = temp (y1)
-
-    mov r12, r4                     @@ Temp = y2
-    mov r4, r3, asr #1              @@ y2 = x2 / 2
-    mov r3, r12                     @@ x2 = temp (y2)
-#endif
-                                    @@ Clipping
-    bic r1, r1, r1, asr #31         @@ max(x1, 0)
-    cmp r1, #CANVAS_WIDTH           @@ min(x1, width - 1)        
-    movge r1, #CANVAS_WIDTH-1       @@ /
-
-    bic r2, r2, r2, asr #31         @@ max(y1, 0)
-    cmp r2, #CANVAS_HEIGHT          @@ min(y1, height - 1)        
-    movge r2, #CANVAS_HEIGHT-1      @@ /
-
-    bic r3, r3, r3, asr #31         @@ max(x1, 0)
-    cmp r3, #CANVAS_WIDTH           @@ min(x1, width - 1)        
-    movge r3, #CANVAS_WIDTH-1       @@ /
-
-    bic r4, r4, r4, asr #31         @@ max(y2, 0)
-    cmp r4, #CANVAS_HEIGHT          @@ min(y2, height - 1)        
-    movge r4, #CANVAS_HEIGHT-1      @@ /
-
-    mov r11, #CANVAS_WIDTH * BPP    @@ stepY = CANVAS_WIDTH * bytes per pixel
-    subs r12, r4, r2                @@ -deltaY = y2 - y1
-    negge r12, r12                  @@ if y2 >= y1: negate -deltaY
-    neglt r11, r11                  @@ if y2 < y1: negate stepY
-
-#if GRAPHICS_MODE == 3
-    rsb r2, r2, r2, lsl #4          @@ y1 *= 240 (width)
-    lsl r2, r2, #4                  @@ /
-    rsb r4, r4, r4, lsl #4          @@ y2 *= 240 (width)
-    lsl r4, r4, #4                  @@ /
-#elif GRAPHICS_MODE == 5
-    add r2, r2, r2, lsl #2          @@ y1 *= 160 (width)
-    lsl r2, r2, #5                  @@ /
-    add r4, r4, r4, lsl #2          @@ y2 *= 160 (width)
-    lsl r4, r4, #5                  @@ /
-#endif
-    add r2, r2, r1                  @@ start pixel = y1 * width + x1
-    add r2, r0, r2, lsl #BPP_POW    @@ start pixel addr = graphics addr + start pixel * bytes per pixel
-    add r4, r4, r3                  @@ end pixel = y2 * width + x2
-    add r0, r0, r4, lsl #BPP_POW    @@ end pixel addr = graphics addr + end pixel * bytes per pixel
-
-    cmp r0, r2                      @@ if line length == 0:
-    beq .L_drawLineEnd              @@ end
-
-    mov r4, #-1                     @@ stepX
-    subs r1, r1, r3                 @@ deltaX = x1 - x2
-    neglt r1, r1                    @@ if x1 < x2: negate deltaX
-    neglt r4, r4                    @@ if x1 < x2: negate stepX
-
-    add r3, r1, r12                 @@ error = deltaX + -deltaY
-
-.L_drawLineLoop:
-    strh r10, [r2]                  @@ Draw pixel
-
-    cmp r12, r3, lsl #1             @@ if -deltaY <= error * 2
-    addle r2, r2, r4, lsl #BPP_POW  @@ x += stepX * bytes per pixel
-    addle r3, r3, r12               @@ error += -deltaY
-    cmple r2, r0
-    beq .L_drawLineEnd
-
-    cmp r1, r3, lsl #1              @@ if deltaX > error * 2
-    addgt r2, r2, r11               @@ y += stepY * CANVAS_WIDTH * bytes per pixel
-    addgt r3, r3, r1                @@ error += deltaX
-
-    cmp r2, r0                      @@ loop until start address == end address
-    bne .L_drawLineLoop
-
-.L_drawLineEnd:
-    pop {r4, r10, r11}
-    bx lr					        @@ Return
-.size drawLine, .-drawLine
-
-
-@@ Parameters: (r0, graphics addr), (r1, x), (r2, y), (r3, signed width), (sp #0, 16 bit color addr)
-@@ Return: void
-.align 2
-.arm
-.global drawHorzLine
-.type drawHorzLine STT_FUNC
-drawHorzLine:
-#if GRAPHICS_MODE == 5 && PREPROCESSED_DATA == 0
-    mov r12, r2                     @@ Temp = y
-    mov r2, r1, asr #1              @@ y = x / 2
-    mov r1, r12                     @@ x =  temp (y)
-    mov r3, r3, asr #1              @@ width /= 2
-    b .G_drawVertLineASM
-#endif
-
-.G_drawHorzLineASM:
-    mov r12, #CANVAS_WIDTH
-    cmp r3, #0
-    negmi r3, r3                    @@ If width < 0: negate width
-    submi r1, r1, r3                @@ If width < 0: x -= width
-
-#if GRAPHICS_MODE == 3
-    rsb r2, r2, r2, lsl #4          @@ y *= 240 (width)
-    lsl r2, r2, #4                  @@ /
-#elif GRAPHICS_MODE == 5
-    add r2, r2, r2, lsl #2          @@ y *= 160 (width)
-    lsl r2, r2, #5                  @@ /
-#endif
-    add r2, r2, r1                  @@ pixel = y * width + x
-    add r2, r0, r2, lsl #BPP_POW    @@ pixel addr = graphics addr + start pixel * bytes per pixel
-
-    ldr r0, [sp, #(0)]              @@ Load colour from stack
-
-    mov r1, #ADDR_IO                @@ Prepare dma address base
-    str r0, [r1, #DMA3_SRC]         @@ Write color address to dma source address
-    str r2, [r1, #DMA3_DST]         @@ Write pixel address to dma destination address
-    orr r3, r3, #0x81000000         @@ Set dma control to copy colour 'width' times
-    str r3, [r1, #DMA3_CNT]         @@ /
-
-    bx lr                           @@ Return
-.size drawHorzLine, .-drawHorzLine
-
-
-@@ Parameters: (r0, graphics addr), (r1, x), (r2, y), (r3, signed height), (sp #0, 16 bit color addr)
-@@ Return: void
-.align 2
-.arm
-.global drawVertLine
-.type drawVertLine STT_FUNC
-drawVertLine:
-#if GRAPHICS_MODE == 5 && PREPROCESSED_DATA == 0
-    mov r12, r2                     @@ Temp = y
-    mov r2, r1, asr #1              @@ y = x / 2
-    mov r1, r12                     @@ x =  temp (y)
-    b .G_drawHorzLineASM
-#endif
-.G_drawVertLineASM:
-    mov r12, #CANVAS_WIDTH
-    cmp r3, #0                 
-    negmi r3, r3                    @@ If height < 0: negate height
-    submi r2, r2, r3                @@ If height < 0: y -= height
-
-#if GRAPHICS_MODE == 3
-    rsb r2, r2, r2, lsl #4          @@ y *= 240 (width)
-    lsl r2, r2, #4                  @@ /
-#elif GRAPHICS_MODE == 5
-    add r2, r2, r2, lsl #2          @@ y *= 160 (width)
-    lsl r2, r2, #5                  @@ /
-#endif
-    add r1, r2, r1                  @@ pixel = y * width + x
-    add r1, r0, r1, lsl #BPP_POW    @@ pixel addr = graphics addr + start pixel * bytes per pixel
-
-    ldr r0, [sp, #(0)]              @@ Load colour from stack
-    ldrh r0, [r0]                   @@ Get color value from addr
-    lsl r12, r12, #BPP_POW          @@ Setup (CANVAS_WIDTH) * bytes per pixel
-.L_drawVertLineLoopY:
-    strh r0, [r1], r12              @@ Draw pixel, and move down vertically
-    subs r3, #1                     @@ Height -= 1
-    bne .L_drawVertLineLoopY
-    bx lr                           @@ Return
-.size drawVertLine, .-drawVertLine
 
 
 @@ Parameters: (r0, graphics addr), (r1, center x), (r2, center y), (r3, half width), (sp #0, half height) (sp #4, 32 bit color addr)
@@ -751,7 +853,7 @@ m3_drawCircleEmpty:
     add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     strh r9, [r8]                   @@ Draw pixel
-    add r8, r4, lsl #BPP            @@ Move left horizontally by radius (y) * 2 * bytes per pixel
+    add r8, r4, lsl #(BPP/8)        @@ Move left horizontally by radius (y) * 2 * bytes per pixel
     strh r9, [r8]                   @@ Draw pixel
 
     sub r8, r2, r3                  @@ pixel y = center y - x
@@ -760,7 +862,7 @@ m3_drawCircleEmpty:
     add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     strh r9, [r8]                   @@ Draw pixel
-    add r8, r4, lsl #BPP            @@ Move left horizontally by radius (y) * 2 * bytes per pixel
+    add r8, r4, lsl #(BPP/8)        @@ Move left horizontally by radius (y) * 2 * bytes per pixel
     strh r9, [r8]                   @@ Draw pixel
 
     sub r6, r1, r3                  @@ pixel x0 = center x - x
@@ -770,7 +872,7 @@ m3_drawCircleEmpty:
     add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     strh r9, [r8]                   @@ Draw pixel
-    add r8, r3, lsl #BPP            @@ Move left horizontally by radius (x) * 2 * bytes per pixel
+    add r8, r3, lsl #(BPP/8)        @@ Move left horizontally by radius (x) * 2 * bytes per pixel
     strh r9, [r8]                   @@ Draw pixel
 
     sub r8, r2, r4                  @@ pixel y = center y - y
@@ -779,7 +881,7 @@ m3_drawCircleEmpty:
     add r8, r0, r8, lsl #BPP_POW    @@ pixel address = graphics address + pixel * bytes per pixel
 
     strh r9, [r8]                   @@ Draw pixel
-    add r8, r3, lsl #BPP            @@ Move left horizontally by radius (x) * 2 * bytes per pixel
+    add r8, r3, lsl #(BPP/8)        @@ Move left horizontally by radius (x) * 2 * bytes per pixel
     strh r9, [r8]                   @@ Draw pixel
 
     add r4, r4, #1                  @@ y++
@@ -812,8 +914,8 @@ m3_mirrorScreenHorz:
 
 .L_mirrorScreenHorzLoop:
     str r0, [r1, #DMA3_SRC]         @@ Write start of the current row to dma source address
-    add r0, #CANVAS_WIDTH * BPP     @@ Write end of the current row to dma destination address
-    sub r0, #BPP                    @@ /
+    add r0, #CANVAS_WIDTH * (BPP/8) @@ Write end of the current row to dma destination address
+    sub r0, #(BPP/8)                @@ /
     str r0, [r1, #DMA3_DST]         @@ /
 
     mov r3, #0x80000000             @@ Set dma control to increment the source address and decrement the destination adrress
@@ -821,7 +923,7 @@ m3_mirrorScreenHorz:
     orr r3, r3, #CANVAS_WIDTH / 2   @@ Set dma control to copy half the width amount of pixels
     str r3, [r1, #DMA3_CNT]         @@ Start dma
 
-    add r0, #BPP                    @@ Increment the current row to next row
+    add r0, #(BPP/8)                @@ Increment the current row to next row
     subs r2, #1                     @@ Height -= 1
     bne .L_mirrorScreenHorzLoop     @@ While Height > 0, mirror the current row
 
@@ -840,25 +942,25 @@ m3_mirrorScreenVert:
     push {r4}
 
     mov r1, #ADDR_IO
-    add r2, r0, #PIXEL_COUNT * BPP  @@ Calculate the start address of the last row
-    sub r2, r2, #CANVAS_WIDTH * BPP @@ /
-    mov r4, #CANVAS_HEIGHT / 2      @@ Height = half screen height
+    add r2, r0, #PIXEL_COUNT * (BPP/8)  @@ Calculate the start address of the last row
+    sub r2, r2, #CANVAS_WIDTH * (BPP/8) @@ /
+    mov r4, #CANVAS_HEIGHT / 2          @@ Height = half screen height
 
 .L_mirrorScreenVertLoop:
-    str r0, [r1, #DMA3_SRC]         @@ Write start of the current row to dma source address
-    add r0, #CANVAS_WIDTH * BPP     @@ Current row += 1
-    str r2, [r1, #DMA3_DST]         @@ Write start of the last row to dma destination address
-    sub r2, #CANVAS_WIDTH * BPP     @@ Last row -= 1
+    str r0, [r1, #DMA3_SRC]             @@ Write start of the current row to dma source address
+    add r0, #CANVAS_WIDTH * (BPP/8)     @@ Current row += 1
+    str r2, [r1, #DMA3_DST]             @@ Write start of the last row to dma destination address
+    sub r2, #CANVAS_WIDTH * (BPP/8)     @@ Last row -= 1
 
-    mov r3, #0x84000000             @@ Set dma control to increment the source and destination adrress
-    orr r3, r3, #CANVAS_WIDTH / 2   @@ Set dma control to copy the width amount of pixels
-    str r3, [r1, #DMA3_CNT]         @@ Start dma
+    mov r3, #0x84000000                 @@ Set dma control to increment the source and destination adrress
+    orr r3, r3, #CANVAS_WIDTH / 2       @@ Set dma control to copy the width amount of pixels
+    str r3, [r1, #DMA3_CNT]             @@ Start dma
 
-    subs r4, #1                     @@ Height -= 1
-    bne .L_mirrorScreenVertLoop     @@ While Height > 0, mirror the current row
+    subs r4, #1                         @@ Height -= 1
+    bne .L_mirrorScreenVertLoop         @@ While Height > 0, mirror the current row
 
     pop {r4}
-    bx lr                           @@ Return
+    bx lr                               @@ Return
 .size m3_mirrorScreenVert, .-m3_mirrorScreenVert
 
 
@@ -872,16 +974,16 @@ m3_mirrorScreenVert:
 m3_mirrorScreenDiag: 
     mov r1, #ADDR_IO
 
-    str r0, [r1, #DMA3_SRC]         @@ Write the top left corner to dma source address
-    add r0, r0, #PIXEL_COUNT * BPP  @@ Write the bottom right corner to dma destination address
-    str r0, [r1, #DMA3_DST]         @@ /
+    str r0, [r1, #DMA3_SRC]             @@ Write the top left corner to dma source address
+    add r0, r0, #PIXEL_COUNT * (BPP/8)  @@ Write the bottom right corner to dma destination address
+    str r0, [r1, #DMA3_DST]             @@ /
 
-    mov r2, #0x80000000             @@ Set dma control to increment the source address and decrement the destination adrress
-    orr r2, r2, #0x200000           @@ /
-    orr r2, r2, #PIXEL_COUNT / 2    @@ Set dma control to copy half the amount of pixels
-    str r2, [r1, #DMA3_CNT]         @@ Start dma
+    mov r2, #0x80000000                 @@ Set dma control to increment the source address and decrement the destination adrress
+    orr r2, r2, #0x200000               @@ /
+    orr r2, r2, #PIXEL_COUNT / 2        @@ Set dma control to copy half the amount of pixels
+    str r2, [r1, #DMA3_CNT]             @@ Start dma
 
-    bx lr                           @@ Return
+    bx lr                               @@ Return
 .size m3_mirrorScreenDiag, .-m3_mirrorScreenDiag
 
 
@@ -893,6 +995,7 @@ m3_mirrorScreenDiag:
 .global setWireframe
 .type setWireframe STT_FUNC
 setWireframe: 
+    ASM_BREAK
     push {lr}
     cmp r0, #0
     beq .L_setWireframeDisable
@@ -983,6 +1086,10 @@ setWireframe:
 .size setWireframe, .-setWireframe
 
 
+@@ Insert the const pool
+.LTORG
+
+
 @@ Parameters: void
 @@ Return: (r0, enabled)
 .section .ewram, "ax", %progbits
@@ -1002,88 +1109,100 @@ isWireframeEnabled:
 .size isWireframeEnabled, .-isWireframeEnabled
 
 
+@@ Insert the const pool
+.LTORG
+
+
 @@ Parameters: (r0, graphics addr), (r1, model addr), (r2, triangle count), (r3, xPos), (sp #0, yPos), (sp #4, zpos)
 @@ Return: void
-.section .iwram, "ax", %progbits
-.align 2
-.arm
-.global draw3DModel
-.type draw3DModel STT_FUNC
-draw3DModel: 
+FUNC_IWRAM draw3DModel
     push {r4-r11, lr}
     mov r4, r1
-    ldr r1, =.L_draw3DModelLoopContinue @@ Setup continue addr
-    add r2, r2, r2, lsl #2              @@ temp = triangle count * 5
-    add r2, r4, r2, lsl #2              @@ model end addr = model addr + temp * 4
-    push {r1-r4}                        @@ Save: loop continue addr (r1), end triangle addr (r2), xPos (r3), current triangle addr (r4)
-    ldr r12, =LUT_DIVISION              @@ Load lut
+    ldr r1, =.L_draw3DModelLoopContinue 	@@ Setup continue addr
+    add r2, r2, r2, lsl #2              	@@ temp = triangle count * 5
+    add r2, r4, r2, lsl #2              	@@ model end addr = model addr + temp * 4
+    push {r1-r4}                        	@@ Save: loop continue addr (r1), end triangle addr (r2), xPos (r3), current triangle addr (r4)
+    ldr r12, =LUT_DIVISION              	@@ Load lut
 
 .L_draw3DModelLoop:
-    ldr r11, [sp, #24]                  @@ Load zPos
-    ldrsh r3, [r4, #4]                  @@ Load vertx1.z
-    add r3, r3, r11                     @@ zPos + vertx1.z
-    cmp r3, #NEAR_PLANE                 @@ If vertx1.z < NEAR_PLANE:
-    blt .L_draw3DModelLoopEnd           @@ Skip to next triangle
+    ldr r11, [sp, #56]                  	@@ Load zPos
+    ldrsh r3, [r4, #4]                  	@@ Load vertx1.z
+    add r3, r3, r11                     	@@ zPos + vertx1.z
+    cmp r3, #NEAR_PLANE                 	@@ If vertx1.z < NEAR_PLANE:
+    blt .L_draw3DModelLoopEnd           	@@ Skip to next triangle
 
-    add r10, r4, #18                    @@ Load colour
-    ldrsh r9, [r4, #16]                 @@ Load vertx3.z
-    ldrsh r6, [r4, #10]                 @@ Load vertx2.z
+    add r10, r4, #18                    	@@ Load colour
+    ldrsh r9, [r4, #16]                 	@@ Load vertx3.z
+    ldrsh r6, [r4, #10]                 	@@ Load vertx2.z
 
-#if GRAPHICS_MODE == 5 && PREPROCESSED_DATA == 0
-    ldrsh r2, [r4, #0]                  @@ Load vertx1.x
-    ldrsh r8, [r4, #12]                 @@ Load vertx3.x
-    ldrsh r5, [r4, #6]                  @@ Load vertx2.x
-    ldrsh r1, [r4, #2]                  @@ Load vertx1.y
-    ldrsh r7, [r4, #14]                 @@ Load vertx3.y
-    ldrsh r4, [r4, #8]                  @@ Load vertx2.y
-#else
-    ldrsh r2, [r4, #2]                  @@ Load vertx1.y
-    ldrsh r8, [r4, #14]                 @@ Load vertx3.y
-    ldrsh r5, [r4, #8]                  @@ Load vertx2.y
-    ldrsh r1, [r4, #0]                  @@ Load vertx1.x
-    ldrsh r7, [r4, #12]                 @@ Load vertx3.x
-    ldrsh r4, [r4, #6]                  @@ Load vertx2.x
-#endif
+	.macro draw3DModel_load_RESOLUTION_X240Y160
+		ldrsh r2, [r4, #2]                  @@ Load vertx1.y
+		ldrsh r8, [r4, #14]                 @@ Load vertx3.y
+		ldrsh r5, [r4, #8]                  @@ Load vertx2.y
+		ldrsh r1, [r4, #0]                  @@ Load vertx1.x
+		ldrsh r7, [r4, #12]                 @@ Load vertx3.x
+		ldrsh r4, [r4, #6]                  @@ Load vertx2.x
+	.endm
+	RUNTIME_REPLACE_OPTION draw3DModelLoadResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), draw3DModel_load_RESOLUTION_X240Y160
+	#if TARGET_PLATFORM == TARGET_GBA
+		.macro draw3DModel_load_RESOLUTION_X160Y120
+			ldrsh r2, [r4, #0]                  @@ Load vertx1.x 
+			ldrsh r8, [r4, #12]                 @@ Load vertx3.x
+			ldrsh r5, [r4, #6]                  @@ Load vertx2.x
+			ldrsh r1, [r4, #2]                  @@ Load vertx1.y
+			ldrsh r7, [r4, #14]                 @@ Load vertx3.y
+			ldrsh r4, [r4, #8]                  @@ Load vertx2.y
+		.endm
+		RUNTIME_REPLACE_OPTION draw3DModelLoadResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), draw3DModel_load_RESOLUTION_X160Y120
+	#endif
 
-    add r9, r9, r11                     @@ zPos + vertx3.z
-    add r6, r6, r11                     @@ zPos + vertx2.z
+    add r9, r9, r11                     	@@ zPos + vertx3.z
+    add r6, r6, r11                     	@@ zPos + vertx2.z
     
-    ldr r11, [sp, #52]                  @@ Load yPos
-    ldr lr, [sp, #8]                    @@ Load xPos
-#if GRAPHICS_MODE == 5 && PREPROCESSED_DATA == 0
-    add r2, r2, lr                      @@ xpos + vertex1.y
-    add r5, r5, lr                      @@ xpos + vertex3.y
-    add r8, r8, lr                      @@ xpos + vertex2.y
-    add r1, r1, r11                     @@ ypos + vertex1.x
-    add r7, r7, r11                     @@ ypos + vertex3.x
-    add r4, r4, r11                     @@ ypos + vertex2.x
-    asr r2, r2, #1
-    asr r5, r5, #1
-    asr r8, r8, #1
-#else
-    add r2, r2, r11                     @@ ypos + vertex1.y
-    add r5, r5, r11                     @@ ypos + vertex3.y
-    add r8, r8, r11                     @@ ypos + vertex2.y
-    add r1, r1, lr                      @@ xpos + vertex1.x
-    add r7, r7, lr                      @@ xpos + vertex3.x
-    add r4, r4, lr                      @@ xpos + vertex2.x
-#endif
+    ldr r11, [sp, #52]                  	@@ Load yPos
+    ldr lr, [sp, #8]                    	@@ Load xPos
+	.macro draw3DModel_translate_RESOLUTION_X240Y160
+		add r2, r2, r11                     @@ ypos + vertex1.y
+		add r5, r5, r11                     @@ ypos + vertex3.y
+		add r8, r8, r11                     @@ ypos + vertex2.y
+		add r1, r1, lr                      @@ xpos + vertex1.x
+		add r7, r7, lr                      @@ xpos + vertex3.x
+		add r4, r4, lr                      @@ xpos + vertex2.x
+		nop									@@ Padding data
+		nop									@@ /
+		nop									@@ /
+	.endm
+	RUNTIME_REPLACE_OPTION draw3DModelTranslateResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), draw3DModel_translate_RESOLUTION_X240Y160
+	#if TARGET_PLATFORM == TARGET_GBA
+		.macro draw3DModel_translate_RESOLUTION_X160Y120
+			add r2, r2, lr                  @@ xpos + vertex1.y 
+			add r5, r5, lr                  @@ xpos + vertex3.y
+			add r8, r8, lr                  @@ xpos + vertex2.y
+			add r1, r1, r11                 @@ ypos + vertex1.x
+			add r7, r7, r11                 @@ ypos + vertex3.x
+			add r4, r4, r11                 @@ ypos + vertex2.x
+			asr r2, r2, #1					@@ xpos / 2
+			asr r5, r5, #1					@@ xpos / 2
+			asr r8, r8, #1					@@ xpos / 2
+		.endm
+		RUNTIME_REPLACE_OPTION draw3DModelTranslateResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), draw3DModel_translate_RESOLUTION_X160Y120
+	#endif
 
-    b .G_drawTriangle3DAsm              @@ Draw triangle
+    b .G_drawTriangle3DAsm              	@@ Draw triangle
 .L_draw3DModelLoopContinue:
-    ldr r4, [sp, #12]                   @@ Load current triangle addr
-    ldr r2, [sp, #4]                    @@ Load end triangle addr
-    mov r12, r8                         @@ Load lut
+    ldr r4, [sp, #12]                   	@@ Load current triangle addr
+    ldr r2, [sp, #4]                    	@@ Load end triangle addr
+    mov r12, r8                         	@@ Load lut
 
 .L_draw3DModelLoopEnd:
-    add r4, r4, #20                     @@ Increment triangle memory addr to next triangle
-    str r4, [sp, #12]                   @@ /
-    cmp r4, r2                          @@ While triangle count > 0, draw next triangle
-    blt .L_draw3DModelLoop              @@ /
+    add r4, r4, #20                     	@@ Increment triangle memory addr to next triangle
+    str r4, [sp, #12]                   	@@ /
+    cmp r4, r2                          	@@ While triangle count > 0, draw next triangle
+    blt .L_draw3DModelLoop              	@@ /
 
-    pop {r0-r12}                        @@ Return
-    bx r12                              @@ /
-.size draw3DModel, .-draw3DModel
+    pop {r0-r12}                        	@@ Return
+    bx r12                              	@@ /
+FUNC_END draw3DModel
 
 
 @@ Parameters: (r0, graphics addr), (r1, x1),       (r2, y1),       (r3, z1), 
@@ -1091,12 +1210,8 @@ draw3DModel:
 @@                                  (sp #12, x3),   (sp #16, y3),   (sp #20, z3), 
 @@             (sp #24, 16 bit color addr)
 @@ Return: void
-.section .iwram, "ax", %progbits
-.align 2
-.arm
-.global m3_drawTriangle3D
-.type m3_drawTriangle3D STT_FUNC
-m3_drawTriangle3D:
+@@ Comments: Expects vertices to be z-sorted with the furthest vertex in z1.
+FUNC_IWRAM drawTriangle3D
     cmp r3, #NEAR_PLANE                 @@ If z1 < NEAR_PLANE:
     bxlt lr                             @@ Return
 
@@ -1107,6 +1222,36 @@ m3_drawTriangle3D:
 	ldr r12, =LUT_DIVISION              @@ Load lut
 	add r10, sp, #40                    @@ Get offset into the stack
 	ldmia r10, {r4-r9, r10}             @@ Load Vertex2, Vertex3 and colour
+
+	#if TARGET_PLATFORM == TARGET_GBA
+        .macro drawTriangle3D_swap_RESOLUTION_X240Y160
+            add pc, pc, #28					@@ Skip padding data
+            nop								@@ Padding data
+            nop								@@ /
+            nop								@@ /
+            nop								@@ /
+            nop								@@ /
+            nop								@@ /
+            nop								@@ /
+            nop								@@ /
+        .endm
+        RUNTIME_REPLACE_OPTION drawTriangle3DSwapResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawTriangle3D_swap_RESOLUTION_X240Y160
+        .macro drawTriangle3D_swap_RESOLUTION_X160Y120
+            mov r11, r2                     @@ Temp = y1
+            mov r2, r1, asr #1              @@ y1 = x1 / 2
+            mov r1, r11                     @@ x1 = temp (y1)
+
+            mov r11, r5                     @@ Temp = y2
+            mov r5, r4, asr #1              @@ y2 = x2 / 2
+            mov r4, r11                     @@ x2 = temp (y2)
+
+			mov r11, r8                     @@ Temp = y3
+            mov r8, r7, asr #1              @@ y3 = x3 / 2
+            mov r7, r11                     @@ x3 = temp (y3)
+        .endm
+        RUNTIME_REPLACE_OPTION drawTriangle3DSwapResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawTriangle3D_swap_RESOLUTION_X160Y120
+    #endif
+
 .G_drawTriangle3DAsm:
     mov r11, #ADDR_IO                   @@ Dma address base
     str r10, [r11, #DMA3_SRC]           @@ Write color address to dma source address
@@ -1238,8 +1383,17 @@ m3_drawTriangle3D:
     lsl r2, r2, #FOV_POW                @@ y1 * fov
 	smull r11, r2, r3, r2               @@ (y1 * fov) / z1, r11 is trashed
 #endif
-	add r1, r1, #CANVAS_WIDTH/2         @@ sX1 = (x1 * fov) / z1 + centerScreenX
-	add r2, r2, #CANVAS_HEIGHT/2        @@ sY1 = (y1 * fov) / z1 + centerScreenY
+	.macro drawTriangle3D_center1_RESOLUTION_X240Y160
+		add r1, r1, #240/2         		@@ sX1 = (x1 * fov) / z1 + centerScreenX
+		add r2, r2, #160/2        		@@ sY1 = (y1 * fov) / z1 + centerScreenY
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangle3DCenter1Resolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawTriangle3D_center1_RESOLUTION_X240Y160
+	.macro drawTriangle3D_center1_RESOLUTION_X160Y120
+		add r1, r1, #160/2         		@@ sX1 = (x1 * fov) / z1 + centerScreenX
+		add r2, r2, #120/2        		@@ sY1 = (y1 * fov) / z1 + centerScreenY
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangle3DCenter1Resolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawTriangle3D_center1_RESOLUTION_X160Y120
+										@@ TODO Linux support
 		
                                         @@ Vertex2 to screen pos
 	ldr r6, [r12, r6, lsl #2]           @@ Load 1 / z2
@@ -1261,8 +1415,17 @@ m3_drawTriangle3D:
     lsl r5, r5, #FOV_POW                @@ y2 * fov
 	smull r11, r5, r6, r5               @@ (y2 * fov) / z2, r11 is trashed
 #endif
-	add r3, r4, #CANVAS_WIDTH/2         @@ sX2 = (x2 * fov) / z2 + centerScreenX
-	add r4, r5, #CANVAS_HEIGHT/2        @@ sY2 = (y2 * fov) / z2 + centerScreenY
+	.macro drawTriangle3D_center2_RESOLUTION_X240Y160
+		add r3, r4, #240/2         		@@ sX2 = (x2 * fov) / z2 + centerScreenX
+		add r4, r5, #160/2        		@@ sY2 = (y2 * fov) / z2 + centerScreenY
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangle3DCenter2Resolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawTriangle3D_center2_RESOLUTION_X240Y160
+	.macro drawTriangle3D_center2_RESOLUTION_X160Y120
+		add r3, r4, #160/2         		@@ sX2 = (x2 * fov) / z2 + centerScreenX
+		add r4, r5, #120/2        		@@ sY2 = (y2 * fov) / z2 + centerScreenY
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangle3DCenter2Resolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawTriangle3D_center2_RESOLUTION_X160Y120
+										@@ TODO Linux support
 
                                         @@ Vertex3 to screen pos
 	ldr r9, [r12, r9, lsl #2]           @@ Load 1 / z3
@@ -1284,8 +1447,17 @@ m3_drawTriangle3D:
     lsl r8, r8, #FOV_POW                @@ y3 * fov
 	smull r11, r6, r9, r8               @@ (y3 * fov) / z3, r11 is trashed
 #endif
-	add r5, r5, #CANVAS_WIDTH/2         @@ sX3 = (x3 * fov) / z3 + centerScreenX
-	add r6, r6, #CANVAS_HEIGHT/2        @@ sY3 = (y3 * fov) / z3 + centerScreenY
+	.macro drawTriangle3D_center3_RESOLUTION_X240Y160
+		add r5, r5, #240/2         		@@ sX3 = (x3 * fov) / z3 + centerScreenX
+		add r6, r6, #160/2        		@@ sY3 = (y3 * fov) / z3 + centerScreenY
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangle3DCenter3Resolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawTriangle3D_center3_RESOLUTION_X240Y160
+	.macro drawTriangle3D_center3_RESOLUTION_X160Y120
+		add r5, r5, #160/2         		@@ sX3 = (x3 * fov) / z3 + centerScreenX
+		add r6, r6, #120/2        		@@ sY3 = (y3 * fov) / z3 + centerScreenY
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangle3DCenter3Resolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawTriangle3D_center3_RESOLUTION_X160Y120
+										@@ TODO Linux support
 
     mov r8, r12                         @@ Load lut
 
@@ -1311,26 +1483,51 @@ m3_drawTriangle3D:
 .G_drawTriangle3dEnd:
     pop {r3-r12}                        @@ Final return
     bx r12                              @@ /
-.size m3_drawTriangle3D, .-m3_drawTriangle3D
+FUNC_END drawTriangle3D
 
 
 @@ Parameters: (r0, graphics addr), (r1, x1), (r2, y1), (r3, x2), (sp #0, y2), (sp #4, x3), (sp #8, y3), (sp #12, 16 bit color addr)
 @@ Return: void
-.section .iwram, "ax", %progbits
-.align 2
-.arm
-.global m3_drawTriangleClipped
-.type m3_drawTriangleClipped STT_FUNC
-m3_drawTriangleClipped:
-    push {r4-r11, lr}                   @@ Save registers
-    ldr r12, =.G_drawTriangle3dEnd      @@ For if the function is called using .G_drawTriangle3DAsm
-    push {r12}                          @@ /
-    
-    add r8, sp, #40                     @@ Get stack offset address
-    ldmia r8, {r4, r5, r6, r10}         @@ Load y2, x3, y3 and color addr from stack
+FUNC_IWRAM drawTriangleClipped
+    push {r4-r11, lr}                   	@@ Save registers
+    ldr r12, =.G_drawTriangle3dEnd      	@@ For if the function is called using .G_drawTriangle3DAsm
+    push {r12}                          	@@ /
+	
+    add r8, sp, #40                     	@@ Get stack offset address
+    ldmia r8, {r4, r5, r6, r10}         	@@ Load y2, x3, y3 and color addr from stack
 
-    mov r8, #ADDR_IO                    @@ Dma address base
-    str r10, [r8, #DMA3_SRC]            @@ Write color address to dma source address
+    mov r8, #ADDR_IO                    	@@ Dma address base
+    str r10, [r8, #DMA3_SRC]            	@@ Write color address to dma source address
+
+	#if TARGET_PLATFORM == TARGET_GBA
+		.macro drawTriangleClipped_swap_RESOLUTION_X240Y160
+			add pc, pc, #28					@@ Skip padding data
+			nop								@@ Padding data
+			nop								@@ /
+			nop								@@ /
+			nop								@@ /
+			nop								@@ /
+			nop								@@ /
+			nop								@@ /
+			nop								@@ /
+		.endm
+		RUNTIME_REPLACE_OPTION drawTriangleClippedSwapResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawTriangleClipped_swap_RESOLUTION_X240Y160
+		.macro drawTriangleClipped_swap_RESOLUTION_X160Y120
+			mov r8, r1						@@ Temp = x1
+			mov r1, r2						@@ x1 = y1
+			mov r2, r8, asr #1				@@ y1 = temp (x1) / 2
+
+			mov r8, r3						@@ Temp = x2
+			mov r3, r4						@@ x2 = y2
+			mov r4, r8, asr #1				@@ y2 = temp (x2) / 2
+
+			mov r8, r5						@@ Temp = x3
+			mov r5, r6						@@ x3 = y3
+			mov r6, r8, asr #1				@@ y3 = temp (x3) / 2
+		.endm
+		RUNTIME_REPLACE_OPTION drawTriangleClippedSwapResolution, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawTriangleClipped_swap_RESOLUTION_X160Y120
+	#endif
+
 #if WIREFRAME == 1
 .G_wireframeDataDst2:
     M_ENABLEWIREFRAMEDATASCR2
@@ -1338,90 +1535,90 @@ m3_drawTriangleClipped:
 .G_wireframeDataDst2:
     M_DISABLEWIREFRAMEDATASCR2
 #endif
-    ldr r8, =LUT_DIVISION               @@ Load lut
+    ldr r8, =LUT_DIVISION               	@@ Load lut
 .G_drawTriangleClippedAsm:
-                                        @@ Sort vertices by y value (top vertex in v1)
+                                        	@@ Sort vertices by y value (top vertex in v1)
     cmp r2, r4
     ble .L_drawTriangleClippedFirstLE
-    eor r1, r1, r3                      @@ Swap v1.x and v2.x
-    eor r3, r3, r1                      @@ /
-    eor r1, r1, r3                      @@ /
-    eor r2, r2, r4                      @@ Swap v1.y and v2.y
-    eor r4, r4, r2                      @@ /
-    eor r2, r2, r4                      @@ /
+    eor r1, r1, r3                      	@@ Swap v1.x and v2.x
+    eor r3, r3, r1                      	@@ /
+    eor r1, r1, r3                      	@@ /
+    eor r2, r2, r4                      	@@ Swap v1.y and v2.y
+    eor r4, r4, r2                      	@@ /
+    eor r2, r2, r4                      	@@ /
 .L_drawTriangleClippedFirstLE:
     cmp r4, r6
     ble .L_drawTriangleClippedSecondLE
-    eor r3, r3, r5                      @@ Swap v2.x and v3.x
-    eor r5, r5, r3                      @@ /
-    eor r3, r3, r5                      @@ /
-    eor r4, r4, r6                      @@ Swap v2.y and v3.y
-    eor r6, r6, r4                      @@ /
-    eor r4, r4, r6                      @@ /
+    eor r3, r3, r5                      	@@ Swap v2.x and v3.x
+    eor r5, r5, r3                      	@@ /
+    eor r3, r3, r5                      	@@ /
+    eor r4, r4, r6                      	@@ Swap v2.y and v3.y
+    eor r6, r6, r4                      	@@ /
+    eor r4, r4, r6                      	@@ /
 .L_drawTriangleClippedSecondLE:
     cmp r2, r4
     ble .L_drawTriangleClippedThirdLE
-    eor r1, r1, r3                      @@ Swap v1.x and v2.x
-    eor r3, r3, r1                      @@ /
-    eor r1, r1, r3                      @@ /
-    eor r2, r2, r4                      @@ Swap v1.y and v2.y
-    eor r4, r4, r2                      @@ /
-    eor r2, r2, r4                      @@ /
+    eor r1, r1, r3                      	@@ Swap v1.x and v2.x
+    eor r3, r3, r1                      	@@ /
+    eor r1, r1, r3                      	@@ /
+    eor r2, r2, r4                      	@@ Swap v1.y and v2.y
+    eor r4, r4, r2                      	@@ /
+    eor r2, r2, r4                      	@@ /
 .L_drawTriangleClippedThirdLE:
 
     cmp r2, r4
-    bne .L_drawTriangleClippedBottomEnd @@ Skip if triangle is not bottom triangle
-    sub r9, r6, r2                      @@ Delta y bottom = v3.y - v1.y
-    cmp r1, r3                          @@ if v1.x > v2.x
-    eorgt r1, r1, r3                    @@ Swap v1.x and v2.x
-    eorgt r3, r3, r1                    @@ /
-    eorgt r1, r1, r3                    @@ /
+    bne .L_drawTriangleClippedBottomEnd 	@@ Skip if triangle is not bottom triangle
+    sub r9, r6, r2                      	@@ Delta y bottom = v3.y - v1.y
+    cmp r1, r3                          	@@ if v1.x > v2.x
+    eorgt r1, r1, r3                    	@@ Swap v1.x and v2.x
+    eorgt r3, r3, r1                    	@@ /
+    eorgt r1, r1, r3                    	@@ /
     mov r7, r3
     mov r3, r1
 
-    ldr lr, =.L_drawTriangleClippedEnd  @@ Set return address to end
-    b m3_drawTriangleClippedBottom 
+    ldr lr, =.L_drawTriangleClippedEnd  	@@ Set return address to end
+    b drawTriangleClippedBottom 
 .L_drawTriangleClippedBottomEnd:
 
-    sub r9, r4, r2                      @@ Delta y top = v2.y - v1.y
+    sub r9, r4, r2                      	@@ Delta y top = v2.y - v1.y
     cmp r4, r6
-    bne .L_drawTriangleClippedTopEnd    @@ Skip if triangle is not top triangle
-    cmp r3, r5                          @@ if v2.x > v3.x
-    eorgt r3, r3, r5                    @@ Swap v2.x and v3.x
-    eorgt r5, r5, r3                    @@ /
-    eorgt r3, r3, r5                    @@ /
+    bne .L_drawTriangleClippedTopEnd    	@@ Skip if triangle is not top triangle
+    cmp r3, r5                          	@@ if v2.x > v3.x
+    eorgt r3, r3, r5                    	@@ Swap v2.x and v3.x
+    eorgt r5, r5, r3                    	@@ /
+    eorgt r3, r3, r5                    	@@ /
     mov r7, r5
-    ldr lr, =.L_drawTriangleClippedEnd  @@ Set return address to end
-    b m3_drawTriangleClippedTop
+    ldr lr, =.L_drawTriangleClippedEnd  	@@ Set return address to end
+    b drawTriangleClippedTop
 .L_drawTriangleClippedTopEnd:
 
-                                        @@ Calculate v4.x
-    mov r12, r9, lsl #16                @@ Delta y top * added precision
-    sub r7, r6, r2                      @@ Delta y = v3.y - v1.y
-    ldr r7, [r8, r7, lsl #2]            @@ Load (1 / delta y)
-    umull lr, r12, r7, r12              @@ Dy = Delta y top / Delta y
+                                        	@@ Calculate v4.x
+    mov r12, r9, lsl #16                	@@ Delta y top * added precision
+    sub r7, r6, r2                      	@@ Delta y = v3.y - v1.y
+    ldr r7, [r8, r7, lsl #2]            	@@ Load (1 / delta y)
+    umull lr, r12, r7, r12              	@@ Dy = Delta y top / Delta y
     
-    sub r7, r5, r1                      @@ Dx = v3.x - v1.x
-    mul r12, r7, r12                    @@ Xoffset = dy * dx
-    add r7, r1, r12, asr #16            @@ v4.x = v1.x + xoffset / added precision
+    sub r7, r5, r1                      	@@ Dx = v3.x - v1.x
+    mul r12, r7, r12                    	@@ Xoffset = dy * dx
+    add r7, r1, r12, asr #16            	@@ v4.x = v1.x + xoffset / added precision
     
-    cmp r3, r7                          @@ if v2.x > v4.x
-    eorgt r3, r3, r7                    @@ Swap v2.x and v4.x
-    eorgt r7, r7, r3                    @@ /
-    eorgt r3, r3, r7                    @@ /
+    cmp r3, r7                          	@@ if v2.x > v4.x
+    eorgt r3, r3, r7                    	@@ Swap v2.x and v4.x
+    eorgt r7, r7, r3                    	@@ /
+    eorgt r3, r3, r7                    	@@ /
 
-    bl m3_drawTriangleClippedTop
-    sub r9, r6, r4                      @@ Delta y bottom = v3.y - v2.y
-    bl m3_drawTriangleClippedBottom
+    bl drawTriangleClippedTop
+    sub r9, r6, r4                      	@@ Delta y bottom = v3.y - v2.y
+    bl drawTriangleClippedBottom
 
 .L_drawTriangleClippedEnd:
-    ldr r12, [sp]                       @@ First return
-    bx r12                              @@ /
+    ldr r12, [sp]                       	@@ First return
+    bx r12                              	@@ /
 
 .global WIREFRAME_COLOR
 WIREFRAME_COLOR:
     .hword	0xBC
-.size m3_drawTriangleClipped, .-m3_drawTriangleClipped
+FUNC_END drawTriangleClipped
 
 
 @@ Insert the const pool
@@ -1431,75 +1628,102 @@ WIREFRAME_COLOR:
 @@ Parameters: (r0, graphics addr), (r5, x1), (r6, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
 @@ Comments: Not callable from C/C++! Preserves {r0, r1, r2, r3, r4, r6, r8, r9}. Trashes: {r5, r7, r10, r11, r12}
 @@ Return: void
-.section .iwram, "ax", %progbits
-.align 2
-.arm
-.global m3_drawTriangleClippedBottom
-.type m3_drawTriangleClippedBottom STT_FUNC
-m3_drawTriangleClippedBottom:    
-    sub r11, r5, r3                         @@ Delta x1 = x1 - x2
-    lsl r11, r11, #16                       @@ Add precision
-    sub r12, r5, r7                         @@ Delta x2 = x1 - x3
-    lsl r12, r12, #16                       @@ Add precision
+FUNC_IWRAM drawTriangleClippedBottom    
+    sub r11, r5, r3                         		@@ Delta x1 = x1 - x2
+    lsl r11, r11, #16                       		@@ Add precision
+    sub r12, r5, r7                         		@@ Delta x2 = x1 - x3
+    lsl r12, r12, #16                       		@@ Add precision
     
-    ldr r1, [r8, r9, lsl #2]                @@ Load (1 / delta y) from lut
+    ldr r1, [r8, r9, lsl #2]                		@@ Load (1 / delta y) from lut
 #if LUT_DIVISION_SIGNED_FIX == 1
-    cmp r11, #0                             @@ Check for sign
-    neglt r11, r11                          @@ Remove sign
-    umull r10, r11, r1, r11                 @@ Invslope1 = Delta x1 / Delta y. (r10 is trashed)
-    neglt r11, r11                          @@ Add sign
+    cmp r11, #0                             		@@ Check for sign
+    neglt r11, r11                          		@@ Remove sign
+    umull r10, r11, r1, r11                 		@@ Invslope1 = Delta x1 / Delta y. (r10 is trashed)
+    neglt r11, r11                          		@@ Add sign
 
-    cmp r12, #0                             @@ Check for sign
-    neglt r12, r12                          @@ Remove sign
-    umull r10, r12, r1, r12                 @@ Invslope2 = Delta x2 / Delta y. (r10 is trashed)
-    neglt r12, r12                          @@ Add sign
+    cmp r12, #0                             		@@ Check for sign
+    neglt r12, r12                          		@@ Remove sign
+    umull r10, r12, r1, r12                 		@@ Invslope2 = Delta x2 / Delta y. (r10 is trashed)
+    neglt r12, r12                          		@@ Add sign
 #else
-    smull r10, r11, r1, r11                 @@ Invslope1 = Delta x1 / Delta y. (r10 is trashed)
-    smull r10, r12, r1, r12                 @@ Invslope2 = Delta x2 / Delta y. (r10 is trashed)
+    smull r10, r11, r1, r11                 		@@ Invslope1 = Delta x1 / Delta y. (r10 is trashed)
+    smull r10, r12, r1, r12                 		@@ Invslope2 = Delta x2 / Delta y. (r10 is trashed)
 #endif
 
-    lsl r5, r5, #16                         @@ CurX1 add precision
-    mov r10, r5                             @@ CurX2
+    lsl r5, r5, #16                         		@@ CurX1 add precision
+    mov r10, r5                             		@@ CurX2
 
-    cmp r4, #CANVAS_HEIGHT-1                @@ if y2/y3 >= 0 && y2/y3 < height &&
-    cmpls r6, #CANVAS_HEIGHT-1              @@ if y1 >= 0 && y1 < height
-    bls .L_drawTriangleClippedBottomSkipYClip @@ Trinagle doesn't need y-clipping, skip.
+	.macro drawTriangleClippedBottomYClip_RESOLUTION_X240Y160
+        cmp r4, #160-1                				@@ if y2/y3 >= 0 && y2/y3 < height &&
+		cmpls r6, #160-1              				@@ if y1 >= 0 && y1 < height
+													@@ Trinagle doesn't need y-clipping, skip.
+		addls pc, pc, #.L_drawTriangleClippedBottomSkipYClip - (drawTriangleClippedBottomYClip_Dst + 16)
 
-                                            @@ Y clipping
-    rsbs r1, r6, #CANVAS_HEIGHT-1           @@ TempInvY = maxY - y1. If (tempInvY < 0) clip y max
-    mlalt r5, r11, r1, r5                   @@ CurX1 += invSlope1 * tempInvY
-    mlalt r10, r12, r1, r10                 @@ CurX2 += invSlope2 * tempInvY
-    addlt r9, r9, r1                        @@ Delta y += tempInvY
+													@@ Y clipping
+		rsbs r1, r6, #160-1           				@@ TempInvY = maxY - y1. If (tempInvY < 0) clip y max
+    .endm
+    RUNTIME_REPLACE_OPTION drawTriangleClippedBottomYClip, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawTriangleClippedBottomYClip_RESOLUTION_X240Y160
+	.macro drawTriangleClippedBottomYClip_RESOLUTION_X160Y120
+		cmp r4, #120-1                				@@ if y2/y3 >= 0 && y2/y3 < height &&
+		cmpls r6, #120-1              				@@ if y1 >= 0 && y1 < height
+													@@ Trinagle doesn't need y-clipping, skip.
+		addls pc, pc, #.L_drawTriangleClippedBottomSkipYClip - (drawTriangleClippedBottomYClip_Dst + 16)
 
-    cmp r4, #0                              @@ If (y2/y3 < 0) clip y min
-    addmi r9, r9, r4                        @@ Delta y += y2
-    movmi r4, #0                            @@ Y2 = 0
+													@@ Y clipping
+		rsbs r1, r6, #120-1           				@@ TempInvY = maxY - y1. If (tempInvY < 0) clip y max
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangleClippedBottomYClip, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawTriangleClippedBottomYClip_RESOLUTION_X160Y120
+													@@ TODO Linux support
 
-    cmp r9, #0                              @@ If (delta y < 0) skip.
-    bxmi lr                                 @@ Return
+    mlalt r5, r11, r1, r5                   		@@ CurX1 += invSlope1 * tempInvY
+    mlalt r10, r12, r1, r10                 		@@ CurX2 += invSlope2 * tempInvY
+    addlt r9, r9, r1                        		@@ Delta y += tempInvY
+
+    cmp r4, #0                              		@@ If (y2/y3 < 0) clip y min
+    addmi r9, r9, r4                        		@@ Delta y += y2
+    movmi r4, #0                            		@@ Y2 = 0
+
+    cmp r9, #0                              		@@ If (delta y < 0) skip.
+    bxmi lr                                 		@@ Return
 
 .L_drawTriangleClippedBottomSkipYClip:
-    add r9, r4, r9                          @@ CurY = y2/y3 - delta y 
-#if GRAPHICS_MODE == 3
-    rsb r9, r9, r9, lsl #4                  @@ Prepare curY pixel address: curY * 240
-    lsl r9, r9, #4                          @@ /
-    rsb r4, r4, r4, lsl #4                  @@ Prepare y2 pixel address: y2 * 240
-    lsl r4, r4, #4                          @@ /
-#elif GRAPHICS_MODE == 5
-    add r9, r9, r9, lsl #2                  @@ Prepare curY pixel address: curY * 160
-    lsl r9, r9, #5                          @@ /
-    add r4, r4, r4, lsl #2                  @@ Prepare y2 pixel address: y2 * 160
-    lsl r4, r4, #5                          @@ /
-#endif
-    add r9, r0, r9, lsl #BPP_POW            @@ Prepare curY pixel address: curY * bytes per pixel
-    add r4, r0, r4, lsl #BPP_POW            @@ Prepare y2 pixel address: y2 * bytes per pixel
+    add r9, r4, r9                          		@@ CurY = y2/y3 - delta y 
 
-    cmp r5, #CANVAS_WIDTH-1                 @@ if x1 >= 0 && x1 < width &&
-    cmpls r3, #CANVAS_WIDTH-1               @@ if x2 >= 0 && x2 < width &&
-    cmpls r7, #CANVAS_WIDTH-1               @@ if x3 >= 0 && x3 < width -> than...
+	.macro drawTriangleClippedBottomYAddr_RESOLUTION_X240Y160
+		rsb r9, r9, r9, lsl #4                  @@ Prepare curY pixel address: curY * 240
+		lsl r9, r9, #4                          @@ /
+		rsb r4, r4, r4, lsl #4                  @@ Prepare y2 pixel address: y2 * 240
+		lsl r4, r4, #4                          @@ /
+	
+		add r9, r0, r9, lsl #BPP_POW            @@ Prepare curY pixel address: curY * bytes per pixel
+		add r4, r0, r4, lsl #BPP_POW            @@ Prepare y2 pixel address: y2 * bytes per pixel
 
-    mov r3, #CANVAS_WIDTH                   @@ Prepare screen width
-    mov r7, #ADDR_IO                        @@ Prepare dma address base
+		cmp r5, #240-1                 			@@ if x1 >= 0 && x1 < width &&
+		cmpls r3, #240-1               			@@ if x2 >= 0 && x2 < width &&
+		cmpls r7, #240-1               			@@ if x3 >= 0 && x3 < width -> than...
+
+		mov r3, #240                   			@@ Prepare screen width
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangleClippedBottomYAddr, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawTriangleClippedBottomYAddr_RESOLUTION_X240Y160
+	.macro drawTriangleClippedBottomYAddr_RESOLUTION_X160Y120
+		add r9, r9, r9, lsl #2                  @@ Prepare curY pixel address: curY * 160
+		lsl r9, r9, #5                          @@ /
+		add r4, r4, r4, lsl #2                  @@ Prepare y2 pixel address: y2 * 160
+		lsl r4, r4, #5                          @@ /
+	
+		add r9, r0, r9, lsl #BPP_POW            @@ Prepare curY pixel address: curY * bytes per pixel
+		add r4, r0, r4, lsl #BPP_POW            @@ Prepare y2 pixel address: y2 * bytes per pixel
+
+		cmp r5, #160-1                 			@@ if x1 >= 0 && x1 < width &&
+		cmpls r3, #160-1               			@@ if x2 >= 0 && x2 < width &&
+		cmpls r7, #160-1               			@@ if x3 >= 0 && x3 < width -> than...
+
+		mov r3, #160                   			@@ Prepare screen width
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangleClippedBottomYAddr, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawTriangleClippedBottomYAddr_RESOLUTION_X160Y120
+												@@ TODO Linux support
+
+    mov r7, #ADDR_IO                        	@@ Prepare dma address base
 #if WIREFRAME == 1
 .G_wireframeDataDst3:
     M_ENABLEWIREFRAMEDATASCR3
@@ -1517,8 +1741,12 @@ m3_drawTriangleClippedBottom:
     movmi r1, #0                            @@ If (tempCurX1 < 0) tempCurX1 = 0
 
     asr r2, r10, #16                        @@ tempCurX2 = CurX2 remove precision
-    cmp r2, #CANVAS_WIDTH                   @@ If (tempCurX2 >= maxX):
-    movge r2, #CANVAS_WIDTH-1               @@ TempCurX2 = maxX
+											@@ If (tempCurX2 >= maxX):
+	RUNTIME_REPLACE_LINE drawTriangleClippedBottomCmp_\index, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), cmp r2, #240
+	RUNTIME_REPLACE_LINE drawTriangleClippedBottomCmp_\index, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), cmp r2, #160
+											@@ TempCurX2 = maxX
+	RUNTIME_REPLACE_LINE drawTriangleClippedBottomMovge_\index, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), movge r2, #240-1
+	RUNTIME_REPLACE_LINE drawTriangleClippedBottomMovge_\index, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), movge r2, #160-1
 
     subs r2, r2, r1                         @@ CurDeltaX = TempCurX2 - TempCurX1
     bmi .L_drawTriangleClippedBottomSkip\index @@ If (CurDeltaX < 0) skip
@@ -1568,18 +1796,13 @@ m3_drawTriangleClippedBottom:
     bxlt lr                                 @@ Return if (curY < y2/y3)
 .endr
     b .L_drawTriangleBottomLoop             @@ Loop while (curY >= y2/y3)
-.size m3_drawTriangleClippedBottom, .-m3_drawTriangleClippedBottom
+FUNC_END drawTriangleClippedBottom
 
 
 @@ Parameters: (r0, graphics addr), (r1, x1), (r2, y1), (r3, x2), (r4, y2/y3), (r7, x3), (r9, delta y)
 @@ Comments: Not callable from C/C++! Preserves {r0, r3, r4, r5, r6, r7, r8}. Trashes: {r1, r2, r9, r10, r11, r12}
 @@ Return: void
-.section .iwram, "ax", %progbits
-.align 2
-.arm
-.global m3_drawTriangleClippedTop
-.type m3_drawTriangleClippedTop STT_FUNC
-m3_drawTriangleClippedTop:    
+FUNC_IWRAM drawTriangleClippedTop
     push {r4-r8}
 
     sub r11, r3, r1                         @@ Delta x1 = x2 - x1
@@ -1606,8 +1829,18 @@ m3_drawTriangleClippedTop:
     lsl r1, r1, #16                         @@ CurX1 add precision
     mov r10, r1                             @@ CurX2 = curX1
 
-    cmp r2, #CANVAS_HEIGHT-1                @@ if y1 >= 0 && y1 < height &&
-    cmpls r4, #CANVAS_HEIGHT-1              @@ if y2/y3 >= 0 && y2/y3 < height
+	.macro drawTriangleClippedTopYClip1_RESOLUTION_X240Y160
+		cmp r2, #160-1                		@@ if y1 >= 0 && y1 < height &&
+    	cmpls r4, #160-1              		@@ if y2/y3 >= 0 && y2/y3 < height
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangleClippedTopYClip1, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawTriangleClippedTopYClip1_RESOLUTION_X240Y160
+	.macro drawTriangleClippedTopYClip1_RESOLUTION_X160Y120
+		cmp r2, #120-1                		@@ if y1 >= 0 && y1 < height &&
+		cmpls r4, #120-1              		@@ if y2/y3 >= 0 && y2/y3 < height
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangleClippedTopYClip1, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawTriangleClippedTopYClip1_RESOLUTION_X160Y120
+											@@ TODO Linux support
+
     bls .L_drawTriangleClippedTopSkipYClip  @@ Triangle doesn't need y-clipping, skip.
 
                                             @@ Y clipping
@@ -1616,34 +1849,60 @@ m3_drawTriangleClippedTop:
     mlagt r10, r12, r5, r10                 @@ CurX2 += invSlope2 * InvY1
     subgt r9, r9, r5                        @@ Delta y -= InvY1
 
-    subs r5, r4, #CANVAS_HEIGHT-1           @@ TempY = y2/y3 - maxY. If (tempy > 0) clip y max.
-    subgt r9, r9, r5                        @@ Delta y -= TempY
-    movgt r4, #CANVAS_HEIGHT-1              @@ Y2/y3 = y max
+	.macro drawTriangleClippedTopYClip2_RESOLUTION_X240Y160
+		subs r5, r4, #160-1           		@@ TempY = y2/y3 - maxY. If (tempy > 0) clip y max.
+		subgt r9, r9, r5                    @@ Delta y -= TempY
+		movgt r4, #160-1              		@@ Y2/y3 = y max
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangleClippedTopYClip2, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawTriangleClippedTopYClip2_RESOLUTION_X240Y160
+	.macro drawTriangleClippedTopYClip2_RESOLUTION_X160Y120
+		subs r5, r4, #120-1           		@@ TempY = y2/y3 - maxY. If (tempy > 0) clip y max.
+		subgt r9, r9, r5                    @@ Delta y -= TempY
+		movgt r4, #120-1              		@@ Y2/y3 = y max
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangleClippedTopYClip2, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawTriangleClippedTopYClip2_RESOLUTION_X160Y120
+											@@ TODO Linux support
 
     cmp r9, #0                              @@ If (delta y < 0) skip.
     bmi .L_drawTriangleClippedTopLoopEnd    @@ /
 
 .L_drawTriangleClippedTopSkipYClip:
     sub r9, r4, r9                          @@ CurY = y2 - delta y 
-#if GRAPHICS_MODE == 3
-    rsb r9, r9, r9, lsl #4                  @@ Prepare curY pixel address: curY * 240
-    lsl r9, r9, #4                          @@ /
-    rsb r4, r4, r4, lsl #4                  @@ Prepare y2 pixel address: y2 * 240
-    lsl r4, r4, #4                          @@ /
-#elif GRAPHICS_MODE == 5
-    add r9, r9, r9, lsl #2                  @@ Prepare curY pixel address: curY * 160
-    lsl r9, r9, #5                          @@ /
-    add r4, r4, r4, lsl #2                  @@ Prepare y2 pixel address: y2 * 160
-    lsl r4, r4, #5                          @@ /
-#endif
-    add r9, r0, r9, lsl #BPP_POW            @@ Prepare curY pixel address: curY * bytes per pixel
-    add r4, r0, r4, lsl #BPP_POW            @@ Prepare y2 pixel address: y2 * bytes per pixel
 
-    cmp r1, #CANVAS_WIDTH-1                 @@ if x1 >= 0 && x1 < width &&
-    cmpls r3, #CANVAS_WIDTH-1               @@ if x2 >= 0 && x2 < width &&
-    cmpls r7, #CANVAS_WIDTH-1               @@ if x3 >= 0 && x3 < width -> than...
+	.macro drawTriangleClippedTopYAddr_RESOLUTION_X240Y160
+		rsb r9, r9, r9, lsl #4              @@ Prepare curY pixel address: curY * 240
+		lsl r9, r9, #4                      @@ /
+		rsb r4, r4, r4, lsl #4              @@ Prepare y2 pixel address: y2 * 240
+		lsl r4, r4, #4                      @@ /
 
-    mov r2, #CANVAS_WIDTH                   @@ Prepare screen width
+		add r9, r0, r9, lsl #BPP_POW        @@ Prepare curY pixel address: curY * bytes per pixel
+		add r4, r0, r4, lsl #BPP_POW        @@ Prepare y2 pixel address: y2 * bytes per pixel
+
+		cmp r1, #240-1                 		@@ if x1 >= 0 && x1 < width &&
+		cmpls r3, #240-1               		@@ if x2 >= 0 && x2 < width &&
+		cmpls r7, #240-1              		@@ if x3 >= 0 && x3 < width -> than...
+
+		mov r2, #240                   		@@ Prepare screen width
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangleClippedTopYAddr, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), drawTriangleClippedTopYAddr_RESOLUTION_X240Y160
+	.macro drawTriangleClippedTopYAddr_RESOLUTION_X160Y120
+		add r9, r9, r9, lsl #2            	@@ Prepare curY pixel address: curY * 160
+		lsl r9, r9, #5                    	@@ /
+		add r4, r4, r4, lsl #2            	@@ Prepare y2 pixel address: y2 * 160
+		lsl r4, r4, #5                    	@@ /
+
+		add r9, r0, r9, lsl #BPP_POW        @@ Prepare curY pixel address: curY * bytes per pixel
+		add r4, r0, r4, lsl #BPP_POW        @@ Prepare y2 pixel address: y2 * bytes per pixel
+
+		cmp r1, #160-1                 		@@ if x1 >= 0 && x1 < width &&
+		cmpls r3, #160-1               		@@ if x2 >= 0 && x2 < width &&
+		cmpls r7, #160-1              		@@ if x3 >= 0 && x3 < width -> than...
+
+		mov r2, #160                   		@@ Prepare screen width
+	.endm
+	RUNTIME_REPLACE_OPTION drawTriangleClippedTopYAddr, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), drawTriangleClippedTopYAddr_RESOLUTION_X160Y120
+											@@ TODO Linux support
+
     mov r7, #ADDR_IO                        @@ Prepare dma address base
 #if WIREFRAME == 1
 .G_wireframeDataDst5:
@@ -1662,8 +1921,12 @@ m3_drawTriangleClippedTop:
     movmi r5, #0                            @@ If (tempCurX1 < 0) tempCurX1 = 0
 
     asr r6, r10, #16                        @@ tempCurX2 = CurX2 remove precision
-    cmp r6, #CANVAS_WIDTH                   @@ If (tempCurX2 >= maxX):
-    movge r6, #CANVAS_WIDTH-1               @@ TempCurX2 = maxX
+											@@ If (tempCurX2 >= maxX):
+	RUNTIME_REPLACE_LINE drawTriangleClippedTopCmp_\index, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), cmp r6, #240
+	RUNTIME_REPLACE_LINE drawTriangleClippedTopCmp_\index, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), cmp r6, #160
+											@@ TempCurX2 = maxX
+	RUNTIME_REPLACE_LINE drawTriangleClippedTopMovge_\index, DEFAULT_RESOLUTION, %(RESOLUTION_X240Y160), movge r6, #240-1
+	RUNTIME_REPLACE_LINE drawTriangleClippedTopMovge_\index, DEFAULT_RESOLUTION, %(RESOLUTION_X160Y120), movge r6, #160-1
 
     subs r6, r6, r5                         @@ CurDeltaX = TempCurX2 - TempCurX1
     bmi .L_drawTriangleClippedTopSkip\index @@ If (CurDeltaX < 0) skip
@@ -1717,41 +1980,31 @@ m3_drawTriangleClippedTop:
 .L_drawTriangleClippedTopLoopEnd:
     pop {r4-r8}                             @@ Return
     bx lr                                   @@ /
-.size m3_drawTriangleClippedTop, .-m3_drawTriangleClippedTop
+FUNC_END drawTriangleClippedTop
 
 
 @@ Parameters: (r0, palette source addr), (r1, palette length), (r2, palette destination index)
 @@ Return: void
-.section .iwram, "ax", %progbits
-.align 2
-.arm
-.global setSpritePalette
-.type setSpritePalette STT_FUNC
-setSpritePalette:
+FUNC_EWRAM setSpritePalette, arm
     mov r3, #ADDR_PAL                   @@ Calculate obj palette destination adress.
     add r3, r3, #0x200                  @@ /
     add r3, r2, lsl #1                  @@ / 
 
     mov r2, #ADDR_IO                    @@ Load dma base adress
-    str r3, [r2, #DMA3_DST]             @@ Write obj palette destination address to dma destination address
     str r0, [r2, #DMA3_SRC]             @@ Write palette source address to dma source address   
+    str r3, [r2, #DMA3_DST]             @@ Write obj palette destination address to dma destination address
 
     mov r3, #0x80000000                 @@ Set dma control to copy palette colors palette length times
     orr r3, r3, r1                      @@ /
     str r3, [r2, #DMA3_CNT]             @@ /
 
     bx lr                               @@ Return
-.size setSpritePalette, .-setSpritePalette
+FUNC_END setSpritePalette
 
 
 @@ Parameters: (r0, sprite sheet source addr), (r1, sprite sheet length), (r2, sprite destination index)
 @@ Return: void
-.section .iwram, "ax", %progbits
-.align 2
-.arm
-.global setSpriteSheet
-.type setSpriteSheet STT_FUNC
-setSpriteSheet:
+FUNC_EWRAM setSpriteSheet, arm
     mov r3, #ADDR_VRAM                  @@ Calculate sprite destination adress.
     add r3, r3, #0x14000                @@ /
     add r3, r2, lsl #6                  @@ / 
@@ -1765,4 +2018,6 @@ setSpriteSheet:
     str r3, [r2, #DMA3_CNT]             @@ /
 
     bx lr                               @@ Return
-.size setSpriteSheet, .-setSpriteSheet
+FUNC_END setSpriteSheet
+
+#endif

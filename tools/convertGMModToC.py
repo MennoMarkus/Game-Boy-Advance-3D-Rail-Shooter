@@ -13,8 +13,8 @@ print(os.getcwd())
 
 # Options
 inputDir = "..\\res"
-outputSrcFileName = "../source/objModelGM.s"
-outputIncFileName = "../include/objModelGM.h"
+outputSrcFileName = "../source/asm/objModelGM.s"
+outputIncFileName = "../include/asm/objModelGM.h"
 applyDirectionalLight = False
 directionalLightX = -1
 directionalLightY = -1
@@ -147,8 +147,7 @@ f.close()
 # Write header file
 f = open(outputIncFileName, "w+")
 f.write("#pragma once\n")
-f.write('#include "./types.h"\n')
-f.write('#include "./asm/graphics.h"\n\n')
+f.write('#include "../types.h"\n')
 for gmModFileName, triangles in gmModTriangles.items():
     gmModName = (gmModFileName[:-6]).upper()
     f.write("#define " + gmModName + "_SIZE %d\n" % (len(triangles)))
