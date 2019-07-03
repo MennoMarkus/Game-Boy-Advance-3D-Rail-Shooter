@@ -1,6 +1,6 @@
 # Game-Boy-Advance-3D-Rail-Shooter
 Very much W.I.P.  
-<img src="docs/PreviewImage.png" width="480"><img src="docs/Project Image.png" width="480">  
+<img src="docs/PreviewImage.png" width="480">  
 A 3d rendered rail shooter game for the game boy advance, inspired by Star Fox. This project combines C++ and ARM assembly.  
 
 # Compiling:
