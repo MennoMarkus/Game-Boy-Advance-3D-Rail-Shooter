@@ -1,6 +1,6 @@
 #pragma once
 #include "../types.h"
-#include "../delcs.h"
+#include "../utils/delcs.h"
 
 struct GameObject
 {

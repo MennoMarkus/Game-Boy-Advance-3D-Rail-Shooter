@@ -1,4 +1,4 @@
-@ Total size: 5520 bytes
+@ Total size: 5640 bytes
 
 @ Size: 3280 bytes
 .data
@@ -291,4 +291,18 @@ OBJMODEL2:
     .hword -7, 0, -7, 0, 4, -9, 0, 0, -10, 32767
     .hword -7, 16, -7, 0, 16, -9, 0, 20, -10, 32767
     .size OBJMODEL2, .-OBJMODEL2
+
+@ Size: 120 bytes
+.data
+.section .iwram
+.align 2
+.global TEMPLATE
+TEMPLATE:
+    .hword -20, 0, 64, -20, -3, 64, -20, 0, 0, 31744
+    .hword 20, 0, 64, 20, -3, 64, 20, -3, 0, 31744
+    .hword -20, 0, 64, 20, 0, 64, -20, 0, 0, 31
+    .hword -20, -3, 64, -20, 0, 0, -20, -3, 0, 31744
+    .hword 20, 0, 64, 20, 0, 0, 20, -3, 0, 31744
+    .hword 20, 0, 64, -20, 0, 0, 20, 0, 0, 31
+    .size TEMPLATE, .-TEMPLATE
 

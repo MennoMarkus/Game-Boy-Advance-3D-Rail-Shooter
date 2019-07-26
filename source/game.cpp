@@ -1,9 +1,10 @@
-#include "../include/asm/graphics.h"
+#include "../include/graphics/graphics.h"
 #include "../include/asm/utils.h"
 #include "../include/input.h"
 #include "../include/asm/gameObject.h"
-#include "../include/objModel.h"
-#include "../include/objModelGM.h"
+#include "../include/asm/objModel.h"
+#include "../include/asm/objModelGM.h"
+#include "../include/gameplay/level.h"
 
 // 1, 8x8 sprite per row.
 const unsigned short PLANE_SPRITES[] = {
@@ -45,8 +46,78 @@ const unsigned short COLOR_PALETTE[] = {
 
 unsigned short* OAM_MEM =(unsigned short*)0x7000000;	//setup a pointer to OBJ memory
 
-int main(void)
+extern "C" bool startGame()
 {
+    bool succes = initGraphics();
+    return succes;
+}
+
+extern "C" void runGame()
+{
+    // Debug
+    u32 clrScreenColor = 0xFFFFFFFF;
+    u16 testColor = 0xFF;
+
+    // Camera setup
+    s32 camX = 0;
+    s32 camY = 0;
+    s32 camZ = 0;
+
+    while (true) {
+
+        // Input handling
+        keyPoll();
+        if (keyIsDown(KEY_RIGHT))
+            camX--;
+        if (keyIsDown(KEY_LEFT))
+            camX++;
+        if (keyIsDown(KEY_R))
+            camY--;
+        if (keyIsDown(KEY_L))
+            camY++;
+        if (keyIsDown(KEY_UP))
+            camZ--;
+        if (keyIsDown(KEY_DOWN))
+            camZ++;
+
+        camZ--;
+        if (camZ == -64)
+            camZ = 0;
+
+        startDraw(); // Switching resolution can cause a flicker if done before startDraw.
+        if (keyIsPressed(KEY_START)) {
+            if (getEncodedResolution() == Resolutions::X240Y160)
+                setResolution(Resolutions::X160Y120);
+            else if (getEncodedResolution() == Resolutions::X160Y120) 
+                setResolution(Resolutions::X240Y160);
+        }
+
+        // Rendering
+        clearScreen((u32)(&clrScreenColor), ClearScreenMode::FULL);
+        drawLevel(camX, camY, camZ);
+
+        //draw3DModel((u32)(fbPointer), (u32)(&OBJMODEL), OBJMODEL_SIZE, camX, camY, camZ + 65);
+        //draw3DModel((u32)(fbPointer), (u32)(&OBJMODEL), OBJMODEL_SIZE, camX, camY, camZ);
+
+        // Render tests
+        //drawPixel(120, 80, testColor);
+        //drawLine(130, 90, 220, 150, testColor);
+        //drawLine(130, 70, 220, 10, testColor);
+        //drawLine(110, 70, 20, 10, testColor);
+        //drawLine(110, 90, 20, 150, testColor);
+        //drawHorzLine(130, 80, 90, (u32)(&testColor));
+        //drawHorzLine(110, 80, -90, (u32)(&testColor));
+        //drawVertLine(120, 70, -60, (u32)(&testColor));
+        //drawVertLine(120, 90, 60, (u32)(&testColor));
+        //drawTriangleClipped((u32)(fbPointer), 10, 80, 230, 10, 120, 150, (u32)(&testColor));
+        //drawTriangle3D(-20, 13, 240, 20, 13, 240, -20, 13, 20, (u32)(&testColor));
+        //draw3DModel((u32)(fbPointer), (u32)(&OBJMODEL), OBJMODEL_SIZE, 0, 0, 0);
+
+        endDraw();
+
+    }
+    return;
+
     pushGameObject(8, 9, 10, 11, (u32)(updateEnemy));
     pushGameObject(8, 9, 10, 11, (u32)(updateEnemy));
     pushGameObject(8, 9, 10, 11, (u32)(updateEnemy));
@@ -54,13 +125,7 @@ int main(void)
     pushGameObject(8, 9, 10, 11, (u32)(updateEnemy));
     popGameObject();
 
-    // Camera setup
-    s32 camX = 0;
-    s32 camY = 0;
-    s32 camZ = 10;
-
     // Rendering setup
-    u32 clrScreenColor = 0xFFFFFFFF;
     initGraphics();
 
     // Sprite setup
@@ -68,7 +133,10 @@ int main(void)
     setSpriteSheet((u32)(&PLANE_SPRITES), 8);
 
     // debug
-    u32 testColor = 0xFF;
+    u32 testColorR = 0xFF;
+    u32 testColorR2 = 0xFA;
+    u32 testColorB = 0xFF00;
+    u32 testColorB2 = 0xFA00;
     bool drawThick = true;
 	OAM_MEM[0] = COLOR_256 | SIZE_16 | 50; // 256 color mode. Height: 16 pixels. Ypos: 50
 	OAM_MEM[1] = SIZE_32 | 110;	// Width: 32 pixels. Xpos: 110.
@@ -76,32 +144,47 @@ int main(void)
     OAM_MEM[3] = 0; // Filler
 
 	while(true) {
-        g_GraphicsAddr = startDraw(g_GraphicsAddr);
-        clearScr(g_GraphicsAddr, (u32)(&clrScreenColor), 0);
+        /*g_GraphicsAddr = startDraw(g_GraphicsAddr);
+        //clearScr(g_GraphicsAddr, (u32)(&clrScreenColor), 0);
         keyPoll();
 
-        noCashStartTimer();
-        noCashStopTimer();
         // Update
         //updateGameObjects();
-        noCashPrintVar("Camera (%vl%, %vl%, %vl%)", camX, camY, camZ);
+        //noCashPrintVar("Camera (%vl%, %vl%, %vl%)", camX, camY, camZ);
 
         // Rendering
-        //draw3DModel(g_GraphicsAddr, (u32)(&CANYON), CANYON_SIZE, camX, camY, camZ);
-        draw3DModel(g_GraphicsAddr, (u32)(&OBJMODEL), OBJMODEL_SIZE, camX, camY, camZ);
+        noCashStartTimer();
+        // Floors
+        drawTriangle3D(g_GraphicsAddr, -20 + camX,  13 + camY, 240 + camZ, 
+                                        20 + camX,  13 + camY, 240 + camZ, 
+                                       -20 + camX,  13 + camY,  20 + camZ, (u32)(&testColorB));
+        drawTriangle3D(g_GraphicsAddr,  20 + camX,  13 + camY, 240 + camZ, 
+                                        20 + camX,  13 + camY,  20 + camZ, 
+                                       -20 + camX,  13 + camY,  20 + camZ, (u32)(&testColorB2));  
+        drawTriangle3D(g_GraphicsAddr, -20 + camX, -13 + camY, 240 + camZ, 
+                                        20 + camX, -13 + camY, 240 + camZ, 
+                                       -20 + camX, -13 + camY,  20 + camZ, (u32)(&testColorB2));
+        drawTriangle3D(g_GraphicsAddr,  20 + camX, -13 + camY, 240 + camZ, 
+                                        20 + camX, -13 + camY,  20 + camZ, 
+                                       -20 + camX, -13 + camY,  20 + camZ, (u32)(&testColorB));
+        // Walls
+        drawTriangle3D(g_GraphicsAddr, -20 + camX,  13 + camY, 240 + camZ, 
+                                       -20 + camX,  13 + camY,  20 + camZ, 
+                                       -20 + camX, -13 + camY,  20 + camZ, (u32)(&testColorR));
+        drawTriangle3D(g_GraphicsAddr, -20 + camX,  13 + camY, 240 + camZ, 
+                                       -20 + camX, -13 + camY, 240 + camZ, 
+                                       -20 + camX, -13 + camY,  20 + camZ, (u32)(&testColorR2));
+        drawTriangle3D(g_GraphicsAddr,  20 + camX,  13 + camY, 240 + camZ, 
+                                        20 + camX,  13 + camY,  20 + camZ, 
+                                        20 + camX, -13 + camY,  20 + camZ, (u32)(&testColorR2));
+        drawTriangle3D(g_GraphicsAddr,  20 + camX,  13 + camY, 240 + camZ, 
+                                        20 + camX, -13 + camY, 240 + camZ, 
+                                        20 + camX, -13 + camY,  20 + camZ, (u32)(&testColorR));
+        noCashStopTimer();
 
-        //drawLine(g_GraphicsAddr, 120, 80,  -5, 5, 0xFF);
-        //drawLine(g_GraphicsAddr, 120, 80, 120, 5, 0xFF);
-        //drawLine(g_GraphicsAddr, 120, 80, 245, 5, 0xFF);
-        //drawLine(g_GraphicsAddr, 120, 80, -5 , 80, 0xFF);
-        //drawLine(g_GraphicsAddr, 120, 80, 120, 80, 0xFF);
-        //drawLine(g_GraphicsAddr, 120, 80, 245, 80, 0xFF);
-        //drawLine(g_GraphicsAddr, 120, 80,  -5, 155, 0xFF);
-        //drawLine(g_GraphicsAddr, 120, 80, 120, 155, 0xFF);
-        //drawLine(g_GraphicsAddr, 120, 80, 245, 155, 0xFF);
-        //drawHorzLine(g_GraphicsAddr, 0, 60, 240, (u32)(&testColor));
-        //drawVertLine(g_GraphicsAddr, 100, 0, 160, (u32)(&testColor));
-        //drawPixel(g_GraphicsAddr, 10, 20, 0xFF);
+        draw3DModel(g_GraphicsAddr, (u32)(&CANYON), CANYON_SIZE, camX, camY, camZ);
+        draw3DModel(g_GraphicsAddr, (u32)(&OBJMODEL), OBJMODEL_SIZE, camX, camY, camZ);
+        */
 
         // Movement
         if (keyIsDown(KEY_RIGHT))
@@ -125,6 +208,10 @@ int main(void)
                 drawThick = !drawThick;
         }
     }
+}
 
-	return 0;
+extern "C" bool exitGame()
+{
+    bool succes = destroyGraphics();
+    return succes;
 }

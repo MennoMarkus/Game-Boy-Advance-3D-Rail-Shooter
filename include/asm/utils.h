@@ -1,5 +1,5 @@
 #pragma once
-#include "./types.h"
+#include "../types.h"
 #if DEBUG == 1
 #include <string.h>
 #endif

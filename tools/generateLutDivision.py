@@ -17,7 +17,7 @@ outputFileName = "../source/asm/lutDivisions.s"
 f = open(outputFileName, "w+")
 f.write("@ Size: %d bytes\n" % ((maxDenominator + 1) * 4))
 f.write("@       %f kilobytes\n" % ((maxDenominator + 1) / 250))
-f.write(".data\n.section .rodata\n.align 2\n.global LUT_DIVISION\nLUT_DIVISION:\n")
+f.write(".data\n.section .iwram\n.align 2\n.global LUT_DIVISION\nLUT_DIVISION:\n")
 
 i = 0
 while i <= maxDenominator:

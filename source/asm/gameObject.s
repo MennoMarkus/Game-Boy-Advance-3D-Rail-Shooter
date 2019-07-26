@@ -1,4 +1,4 @@
-#include "../../include/delcs.h"
+#include "../../include/utils/delcs.h"
 
 @@ Data available:
 @@ - GAMEOBJECT_BUFFER
@@ -11,14 +11,11 @@
 .data
 
 @@ A ram buffer containing gameobjects data. Each gameobjects update method is called each frame
-@@ TODO use .sbss to save on rom memory
 .section .iwram
 .align 2
 .global GAMEOBJECT_BUFFER
 GAMEOBJECT_BUFFER:
-.rept GAMEOBJECT_BUFFER_SIZE
-    .space GAMEOBJECT_SIZE
-.endr
+.fill GAMEOBJECT_BUFFER_SIZE,1,0
 .size GAMEOBJECT_BUFFER, .-GAMEOBJECT_BUFFER
 
 @@ A pointer to the current start of the gameobject que

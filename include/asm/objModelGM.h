@@ -1,6 +1,5 @@
 #pragma once
-#include "./types.h"
-#include "./asm/graphics.h"
+#include "../types.h"
 
 #define CANYON_SIZE 80
 extern "C" const s16 CANYON[CANYON_SIZE][10];

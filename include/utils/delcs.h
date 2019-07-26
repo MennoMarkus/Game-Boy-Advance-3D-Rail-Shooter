@@ -1,3 +1,18 @@
+#ifndef DELCS_H
+#define DELCS_H
+
+//TARGETS
+#define TARGET_GBA 0x1
+#define TARGET_LINUX 0x2
+#define TARGET_PLATFORM TARGET_GBA
+
+#if TARGET_PLATFORM == TARGET_GBA
+    #define FRAME_BUFFER_ADDR 0x3000000
+#elif TARGET_PLATFORM == TARGET_LINUX
+    #define FRAME_BUFFER_ADDR 0x3000000 // TODO find address
+#endif
+
+//GENERAL
 #define GRAPHICS_MODE 3
 
 #define ADDR_EWRAM  0x2000000
@@ -9,9 +24,7 @@
 #define ADDR_ROM    0x8000000
 #define ADDR_SRAM   0xE000000
 
-//GENERAL
-#define PREPROCESSED_DATA 0
-#define LUT_DIVISION_SIGNED_FIX 0 // Fixes an issues where / 1 or / 2 with the lut is incorrect at the cost of 3 more cycles
+#define LUT_DIVISION_SIGNED_FIX 0 // Fixes an issues where / 1 or / 2 with the lut is incorrect at the cost of 3 more cycles per devision
 
 //GRAPHICS
 #if GRAPHICS_MODE == 3
@@ -23,13 +36,10 @@
 #define CANVAS_WIDTH 160
 #define CANVAS_HEIGHT 120
 #define PIXEL_COUNT 0x4B00
-
 #endif
 
-#define SCREEN_WIDTH 240
-#define SCREEN_HEIGHT 160
-#define DUBBLE_BUFFER 0
-#define BPP 2
+#define DEFAULT_DOUBLE_BUFFER 1
+#define BPP 16
 #define BPP_POW 1
 
 #define FOV_POW 7
@@ -37,7 +47,7 @@
 #define BACKFACE_CULLING 0 //TODO broken with clipping
 #define TRI_LOOP_UNROLL 0,1,2,3,4,5,6,7,8,9 // How many times should the for loop unroll
 
-#define WIREFRAME 1 // Only used for initial startup state
+#define WIREFRAME 0 // Only used for initial startup state
 #define WIREFRAME_THICK_LINES 0 // Only used for initial startup state
 #define WIREFRAME_RUNTIME_SWITCH 1
 
@@ -78,8 +88,15 @@
 #define GAMEOBJECT_SIZE 0xC
 #define GAMEOBJECT_BUFFER_SIZE 0x5
 
+#define SECTION_COUNT 0,1,2 
+#define SECTION_LENGTH 64
+#define TRIANGLES_PER_SECTION 128
+#define TRIANGLES_PER_COPY 8
+
 //DEBUG
 #define DEBUG 1
 #define BREAK __asm ("mov r11, r11");
 #define ASM_BREAK mov r11, r11
 #define TODO 
+
+#endif

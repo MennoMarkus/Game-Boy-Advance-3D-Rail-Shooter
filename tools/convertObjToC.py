@@ -14,8 +14,8 @@ print(os.getcwd())
 
 # Options
 inputDir = "..\\res"
-outputSrcFileName = "../source/objModel.s"
-outputIncFileName = "../include/objModel.h"
+outputSrcFileName = "../source/asm/objModel.s"
+outputIncFileName = "../include/asm/objModel.h"
 applyDirectionalLight = False
 directionalLightX = -1
 directionalLightY = -1
@@ -187,8 +187,7 @@ f.close()
 # Write header file
 f = open(outputIncFileName, "w+")
 f.write("#pragma once\n")
-f.write('#include "./types.h"\n')
-f.write('#include "./asm/graphics.h"\n\n')
+f.write('#include "../types.h"\n')
 for objFileName, triangles in objTriangles.items():
     objName = (objFileName[:-4]).upper()
     f.write("#define " + objName + "_SIZE %d\n" % (len(triangles)))

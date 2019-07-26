@@ -1,4 +1,4 @@
-#include "../../include/delcs.h"
+#include "../../include/utils/delcs.h"
 
 @@ Functions available:
 @@ - startTimer
@@ -100,7 +100,7 @@ noCashPrintBuffer:                  @@ Message data buffer
 
 
 @@ Parameters: (r0, const char* str), (r1, variable 1),   (r2, variable 2),   (r3, variable 3),   (sp #0, varible 4)
-@@ Comments: Allows up to 4 variables to be printed. Use %var to insert a variable into the string. After calling this function the string will be modified.
+@@ Comments: Allows up to 4 variables to be printed. Use %vl% to insert a variable into the string. After calling this function the string will be modified.
 @@           Variables are inserted in order of function arguments. The normal noCashPrint syntax is also allowed.
 @@ Return: void (but string is modified)
 .align 2

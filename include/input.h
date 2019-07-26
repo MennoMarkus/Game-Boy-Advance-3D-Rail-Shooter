@@ -1,5 +1,5 @@
 #pragma once
-#include "./delcs.h"
+#include "./utils/delcs.h"
 #include "./types.h"
 
 extern u16 _keyInputCur, _keyInputPrev;
